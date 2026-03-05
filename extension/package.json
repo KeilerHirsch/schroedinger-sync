@@ -1,0 +1,59 @@
+{
+  "name": "schroedinger-sync",
+  "displayName": "Schroedinger Sync",
+  "description": "Automatic sync between Claude Desktop and VS Code. Converts Claude Code sessions into readable Markdown.",
+  "version": "1.5.0",
+  "publisher": "KeilerHirsch",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KeilerHirsch/schroedinger-sync"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["claude", "sync", "ai", "productivity", "markdown"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "schroedingerSync.syncNow",
+        "title": "Schroedinger Sync: Sync Now"
+      }
+    ],
+    "configuration": {
+      "title": "Schroedinger Sync",
+      "properties": {
+        "schroedingerSync.autoSync": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically sync when new sessions are detected."
+        },
+        "schroedingerSync.outputDir": {
+          "type": "string",
+          "default": "./sync",
+          "description": "Output directory for Markdown summaries (relative to workspace or absolute)."
+        },
+        "schroedingerSync.gitAutoCommit": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-commit synced files to Git."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

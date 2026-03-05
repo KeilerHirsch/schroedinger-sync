@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.schroedinger_state.json
+sync/
+*.egg-info/
+dist/
+build/
+.env

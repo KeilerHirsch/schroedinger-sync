@@ -14,10 +14,18 @@ Schroedinger Sync reads Claude Code session transcripts (JSONL) and generates re
 
 ## Quick Start
 
+### VS Code Extension (v1.5) -- Recommended
+
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=KeilerHirsch.schroedinger-sync) or search "Schroedinger Sync" in Extensions.
+
+Works out of the box -- Statusbar button appears, auto-sync watches for new sessions.
+
+### Python CLI (v1.0)
+
 ```bash
 # Clone
 git clone https://github.com/KeilerHirsch/schroedinger-sync.git
-cd schroedinger-sync
+cd schroedinger-sync/cli
 
 # Run (no dependencies needed -- pure Python 3.10+)
 python sync_schroedinger.py
@@ -77,9 +85,9 @@ Environment variables:
 
 ## Roadmap
 
-- **v1.0** -- Python script (current)
-- **v1.5** -- VS Code Extension (Marketplace)
-- **v2.0** -- Desktop App with GUI, multi-AI sync (Claude + Gemini + DeepSeek)
+- **v1.0** -- Python CLI (stable)
+- **v1.5** -- VS Code Extension (current)
+- **v2.0** -- Multi-AI sync (Claude + Gemini + DeepSeek), Freemium
 
 ## License
 

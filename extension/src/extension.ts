@@ -151,11 +151,11 @@ function formatDate(date: Date): string {
   return `${y}${m}${d}`;
 }
 
-function gitCommit(repoPath: string, message: string): void {
+function gitCommit(outputDir: string, message: string): void {
   try {
-    const cwd = path.dirname(repoPath);
-    cp.execSync("git add -A", { cwd, timeout: 30000 });
-    cp.execSync(`git commit -m "${message}"`, { cwd, timeout: 30000 });
+    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(outputDir);
+    cp.execFileSync("git", ["add", "-A"], { cwd, timeout: 30000 });
+    cp.execFileSync("git", ["commit", "-m", message], { cwd, timeout: 30000 });
   } catch {
     // Git commit failed silently
   }

@@ -22,14 +22,14 @@ from datetime import datetime, timezone
 # === CONFIGURATION ===
 
 # Claude Code sessions directory
-CLAUDE_CODE_SESSIONS = Path(os.environ.get("USERPROFILE", "~")) / ".claude" / "projects"
+CLAUDE_CODE_SESSIONS = Path(os.environ.get("USERPROFILE", "") or Path.home()) / ".claude" / "projects"
 
 # Output directory for synced session summaries
 SYNC_OUTPUT_DIR = Path(os.environ.get("SCHROEDINGER_OUTPUT",
     r"F:\Users\KeilerHirsch\Documents\Vibe_Coding_VSCODE\sync"))
 
 # CLAUDE.md to update (global memory)
-CLAUDE_MD_PATH = Path(os.environ.get("USERPROFILE", "~")) / ".claude" / "CLAUDE.md"
+CLAUDE_MD_PATH = Path(os.environ.get("USERPROFILE", "") or Path.home()) / ".claude" / "CLAUDE.md"
 
 # Auto-memory directory
 AUTO_MEMORY_DIR = CLAUDE_CODE_SESSIONS  # will be resolved per-project
@@ -41,7 +41,7 @@ GIT_AUTO_COMMIT = os.environ.get("SCHROEDINGER_GIT_COMMIT", "false").lower() == 
 MAX_SESSIONS = int(os.environ.get("SCHROEDINGER_MAX_SESSIONS", "0"))
 
 # State file to track what we've already synced
-STATE_FILE = Path(os.environ.get("USERPROFILE", "~")) / ".claude" / ".schroedinger_state.json"
+STATE_FILE = Path(os.environ.get("USERPROFILE", "") or Path.home()) / ".claude" / ".schroedinger_state.json"
 
 
 def load_state():

@@ -6,7 +6,7 @@ https://github.com/KeilerHirsch/schroedinger-sync
 Reads Claude Code JSONL session transcripts and generates readable Markdown summaries.
 Auto-updates CLAUDE.md memory and optionally commits to Git.
 
-Author: Michael Popow (@KeilerHirsch)
+Author: KeilerHirsch
 License: MIT
 """
 

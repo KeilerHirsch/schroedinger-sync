@@ -95,6 +95,6 @@ MIT -- see [LICENSE](LICENSE)
 
 ## Author
 
-**Michael Popow** ([@KeilerHirsch](https://github.com/KeilerHirsch))
+**KeilerHirsch** ([@KeilerHirsch](https://github.com/KeilerHirsch))
 
 Built with Claude Code. Because Schroedinger Sync didn't exist yet.

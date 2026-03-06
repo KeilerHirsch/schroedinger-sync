@@ -6,3 +6,6 @@ sync/
 dist/
 build/
 .env
+extension/out/
+extension/node_modules/
+*.vsix

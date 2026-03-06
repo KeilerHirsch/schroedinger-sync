@@ -57,4 +57,4 @@ Click the statusbar item to trigger a sync.
 
 ## License
 
-MIT -- [Michael Popow](https://github.com/KeilerHirsch) (@KeilerHirsch)
+MIT -- [KeilerHirsch](https://github.com/KeilerHirsch)

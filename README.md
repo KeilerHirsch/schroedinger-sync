@@ -173,14 +173,6 @@ Environment variables:
 
 **The breakthrough:** Your Claude Desktop conversations are trapped inside the app. You can't search them, export them, or share them with Claude Code. Until now.
 
-```bash
-# Export ALL your Desktop Claude conversations as readable Markdown files
-python cli/extract_desktop_chats.py --output ./my-chats
-
-# Run silently in the background (for automation)
-python cli/extract_desktop_chats.py --quiet
-```
-
 **What it does:**
 1. Reads your login session from the Claude Desktop app (securely, using your OS credentials)
 2. Downloads all your conversations through the same API that claude.ai uses in your browser
@@ -191,7 +183,7 @@ python cli/extract_desktop_chats.py --quiet
 
 **Why this matters:** 10+ developers tried cracking open local database files. We just walked through the front door.
 
-Requirements: `pip install pycryptodome pywin32` (Windows only for now, macOS/Linux planned)
+> The Desktop Extraction engine is available as part of **Schroedinger Sync Pro** (coming with v1.0). [Join the waitlist](https://github.com/KeilerHirsch/schroedinger-sync/issues) to get early access.
 
 ---
 
@@ -206,7 +198,18 @@ The first major release transforms Schroedinger Sync from a session dumper into 
 - **AES-256 Encryption** -- Sensitive knowledge encrypted at rest, OS keyring integration (Pro)
 - **One-Click Export** -- Format-specific output for each AI tool
 
-**Pricing model:** Open Core. The Free tier covers multi-AI parsing, memory files, and clipboard export. Pro adds the knowledge graph, conflict detection, LLM-assisted extraction, and encryption.
+**Pricing model:** Open Core.
+
+| | Free | Pro |
+|---|---|---|
+| Multi-AI session parsing | Yes | Yes |
+| Memory files & Markdown export | Yes | Yes |
+| Clipboard export | Yes | Yes |
+| **Desktop Chat Extraction** | -- | **Yes** |
+| **Knowledge Graph** | -- | **Yes** |
+| **Conflict Detection** | -- | **Yes** |
+| **AES-256 Encryption** | -- | **Yes** |
+| **LLM-assisted extraction** | -- | **Yes** |
 
 ---
 

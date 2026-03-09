@@ -2,7 +2,7 @@
   "name": "schroedinger-sync",
   "displayName": "Schroedinger Sync",
   "description": "Automatic sync between Claude Desktop and VS Code. Converts Claude Code sessions into readable Markdown.",
-  "version": "1.5.0",
+  "version": "0.2.0",
   "publisher": "KeilerHirsch",
   "license": "MIT",
   "repository": {

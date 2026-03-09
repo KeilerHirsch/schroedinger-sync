@@ -11,20 +11,35 @@
 
 ---
 
-## The Problem
+## TL;DR -- What Does This Do?
+
+You use Claude Desktop to brainstorm. You use Claude Code in VS Code to actually build things. You use Gemini to double-check facts. **None of them know what the others said.**
+
+Schroedinger Sync connects them. Every AI you use gets access to what every other AI already figured out. No more repeating yourself. No more "but I already told Claude about this 3 sessions ago."
+
+**Before Schroedinger Sync:**
+- You explain the same project context to every AI, every session
+- Claude Desktop builds a plan, Claude Code has no idea it exists
+- Gemini corrects a fact, but Claude keeps using the wrong version
+- You hit the token limit and lose everything
+
+**After Schroedinger Sync:**
+- All your AI tools share one knowledge base
+- Desktop brainstorm sessions are automatically readable by Code
+- Facts, decisions, and corrections flow between all your AIs
+- Your context survives token limits, session restarts, and app switches
+
+**100% private.** Everything stays on your computer. No cloud. No account. No server. GDPR by design.
+
+---
+
+## The Problem (In Detail)
 
 Every AI instance starts from zero. **Claude Desktop doesn't talk to Claude Code. Neither talks to Gemini. Or ChatGPT. Or DeepSeek.**
 
-If you use more than one AI tool, you already know:
-
-- You brainstorm in Claude Desktop, then manually copy context into VS Code
-- You fact-check in Gemini, but the correction never reaches your Claude session
-- You lose your entire conversation context when hitting the **75% token limit** -- forced to start over
-- One AI confidently states something another already corrected three sessions ago
-
 This isn't a minor inconvenience. There are [at least 6 open feature requests](https://github.com/anthropics/claude-code/issues) on Anthropic's official repo for exactly this -- Desktop-to-Code session sync. Anthropic's own workarounds (`&` prefix, `--teleport`, `claude mcp serve`) are all **one-way**. No one has solved bidirectional sync yet.
 
-**Community projects have tried and failed:**
+**Other projects have tried:**
 
 | Project | Approach | Limitation |
 |---------|----------|------------|
@@ -36,42 +51,38 @@ Schroedinger Sync takes a different approach entirely.
 
 ---
 
-## The Solution
+## How It Works
 
 Instead of trying to sync live sessions (which every API restricts), Schroedinger Sync builds a **shared knowledge layer** across all your AI tools.
 
 ```
-                    Your AI Ecosystem
-                          |
-        +-----------------+-----------------+
+        Your AI Tools
         |         |         |         |
      Claude    Gemini   DeepSeek   ChatGPT
-     (JSONL)   (JSON)    (MD)      (JSON)
         |         |         |         |
         +----+----+----+----+----+----+
              |              |
-        +---------+    +---------+
-        | Memory  |    |Knowledge|
-        | Layer   |    | Graph   |
-        | (Free)  |    | (Pro)   |
-        | .md     |    | .json   |
-        +---------+    +---------+
+      +------------+  +------------+
+      | Memory     |  | Knowledge  |
+      | (Markdown) |  | Graph      |
+      | Free       |  | Pro        |
+      +------------+  +------------+
              |              |
-        +----+--------------+----+
-        |   Conflict Detector    |
-        |  "Eva GdB 20 vs 30?"  |
+        +------------------------+
+        |  Conflict Detector     |
+        | "Claude says A,        |
+        |  Gemini says B -- who  |
+        |  is right?"            |
         +------------------------+
              |
-        Export to any AI
+        Feed into any AI
 ```
 
-**How it works:**
-
-1. Reads session transcripts from Claude Code, Gemini, DeepSeek, ChatGPT
-2. Extracts structured knowledge: facts, decisions, corrections, tasks
-3. Detects contradictions across AI sources ("Claude says X, Gemini says Y")
-4. Generates clean Markdown topic files -- your AI-agnostic memory
-5. One-click export to feed any AI tool with verified context
+1. **Reads** your conversation history from Claude Code, Claude Desktop, Gemini, ChatGPT
+2. **Extracts** the important stuff: facts, decisions, corrections, open tasks
+3. **Detects conflicts** when two AIs disagree about the same thing
+4. **Generates** clean topic files -- your personal AI memory that works everywhere
+5. **Feeds back** into any AI tool so it knows what the others already figured out
 
 **Privacy-first:** Everything stays local. No cloud. No server. No account. GDPR by design.
 
@@ -160,27 +171,27 @@ Environment variables:
 
 ### v0.3: Desktop Chat Extraction (NEW)
 
-While everyone else tries to hack local databases (LevelDB, IndexedDB, JSONL), we walked through the **front door**:
+**The breakthrough:** Your Claude Desktop conversations are trapped inside the app. You can't search them, export them, or share them with Claude Code. Until now.
 
 ```bash
-# Extract ALL your Claude Desktop conversations to Markdown
+# Export ALL your Desktop Claude conversations as readable Markdown files
 python cli/extract_desktop_chats.py --output ./my-chats
 
-# Silent mode for automation (hooks, scheduled tasks)
+# Run silently in the background (for automation)
 python cli/extract_desktop_chats.py --quiet
 ```
 
-**How it works:**
-1. Reads the session cookie from Claude Desktop's Electron app (Windows DPAPI + AES-256-GCM)
-2. Calls the official `claude.ai` API -- your data, your app, your cookies
-3. Converts every conversation to clean, searchable Markdown
-4. Incremental: only downloads new conversations on subsequent runs
+**What it does:**
+1. Reads your login session from the Claude Desktop app (securely, using your OS credentials)
+2. Downloads all your conversations through the same API that claude.ai uses in your browser
+3. Saves each conversation as a clean, searchable Markdown file
+4. Only downloads NEW conversations on subsequent runs (incremental)
 
-**Why this matters:** 10+ developers tried reverse-engineering local file formats. We use the same API that claude.ai uses in your browser. No hack, no reverse engineering, no breaking changes when Anthropic updates their app.
+**This is NOT a hack.** It reads YOUR cookies from YOUR app to access YOUR data through the official API. The same approach works for any AI desktop app -- ChatGPT, Gemini, DeepSeek.
 
-**This approach scales to ANY Electron/Chromium AI app:** ChatGPT, Gemini, DeepSeek -- they all have APIs + session cookies.
+**Why this matters:** 10+ developers tried cracking open local database files. We just walked through the front door.
 
-Requirements: `pip install pycryptodome pywin32` (Windows only for now)
+Requirements: `pip install pycryptodome pywin32` (Windows only for now, macOS/Linux planned)
 
 ---
 
@@ -199,27 +210,26 @@ The next major version transforms Schroedinger Sync from a session dumper into a
 
 ---
 
-## Why Not Just Use the API Directly?
+## "Why Not Just Use One AI Tool?"
 
-A common counterargument: *"Just build a bot that talks to the API -- no sync needed."*
+A fair question. If you only use ONE AI app, you don't need Schroedinger Sync. But most power users don't:
 
-That's like saying a bicycle is better than a car because it has fewer parts. A direct API wrapper trades away:
+- **Claude Desktop** is great for brainstorming, documents, and visual artifacts
+- **Claude Code (VS Code)** is great for actually building software -- it writes, tests, and fixes code autonomously
+- **Gemini** has Google Search built in for fact-checking
+- **ChatGPT** has a massive user base and plugin ecosystem
 
-- **Artifacts** -- Claude Desktop's live-editing pane for code, documents, prototypes
-- **Projects** -- Persistent workspace organization with curated knowledge
-- **MCP Ecosystem** -- Filesystem, GitHub, databases, Sentry, Figma, and hundreds of MCP servers
-- **Agentic Code Loop** -- Claude Code writes code, runs tests, sees failures, fixes bugs autonomously
-- **Automatic Context Management** -- Built-in conversation history, compaction, and memory
+Each tool has strengths the others don't. The problem is they don't share context. Schroedinger Sync is the bridge.
 
-Schroedinger Sync is for power users who need **both** Desktop's rich UI **and** Code's agentic capabilities -- and want context to flow between them. And between every other AI they use.
+**"But why not just use the API directly?"** Because a direct API wrapper loses everything that makes these tools powerful: Desktop's artifacts, Code's autonomous coding loop, Projects, MCP integrations, conversation history. You'd be trading a car for a bicycle just because it has fewer parts.
 
 ---
 
 ## Origin Story
 
-> *"I had a breakdown because ChatGPT confidently lied about something Claude had already corrected three sessions ago. The correction existed -- but the AIs didn't talk to each other. So I built Schroedinger Sync."*
+> *"ChatGPT confidently repeated something Claude had already corrected three sessions ago. The correction existed -- but the AIs didn't talk to each other. I was done copy-pasting context between 4 different AI tools. So I built Schroedinger Sync."*
 
-This project started as a personal fix. A manual system of memory files, topic files, correction tables, and rules that kept multiple AI instances aligned. It worked. v2.0 automates exactly that.
+This project started as a personal fix. A manual system of memory files, topic files, and rules that kept multiple AI instances aligned. It worked so well that automating it became the obvious next step. That's v2.0.
 
 ---
 

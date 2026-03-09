@@ -47,7 +47,7 @@ Click the statusbar item to trigger a sync.
 
 ## Also Available
 
-- [Python CLI (v1.0)](https://github.com/KeilerHirsch/schroedinger-sync/tree/main/cli) -- Terminal-based sync for automation and CI
+- [Python CLI (v0.1)](https://github.com/KeilerHirsch/schroedinger-sync/tree/main/cli) -- Terminal-based sync for automation and CI
 
 ## Links
 

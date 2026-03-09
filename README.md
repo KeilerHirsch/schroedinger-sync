@@ -5,7 +5,7 @@
 > *"Is your AI synchronized? Yes. And no. -- until you install Schroedinger Sync."*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=KeilerHirsch.schroedinger-sync)
+[![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode)](extension/)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](cli/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/KeilerHirsch/schroedinger-sync/pulls)
 
@@ -92,7 +92,13 @@ Instead of trying to sync live sessions (which every API restricts), Schroedinge
 
 ### VS Code Extension (v0.2) -- Recommended
 
-Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=KeilerHirsch.schroedinger-sync) or search "Schroedinger Sync" in Extensions.
+```bash
+# Clone and install locally
+git clone https://github.com/KeilerHirsch/schroedinger-sync.git
+cd schroedinger-sync/extension
+npm install && npm run compile && npx vsce package
+# Then install the generated .vsix via VS Code: Extensions → "..." → Install from VSIX
+```
 
 Works out of the box -- statusbar button appears, auto-sync watches for new sessions.
 

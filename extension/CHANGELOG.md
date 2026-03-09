@@ -1,12 +1,5 @@
 # Changelog
 
-## 0.3.0 (2026-03-09)
-
-- Desktop Chat Extraction via official claude.ai API
-- DPAPI + AES-256-GCM cookie decryption (Windows)
-- Incremental sync (only downloads new conversations)
-- Auto org-ID detection
-
 ## 0.2.0 (2026-03-06)
 
 - VS Code Extension release

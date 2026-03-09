@@ -90,13 +90,13 @@ Instead of trying to sync live sessions (which every API restricts), Schroedinge
 
 ## Quick Start
 
-### VS Code Extension (v1.5) -- Recommended
+### VS Code Extension (v0.2) -- Recommended
 
 Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=KeilerHirsch.schroedinger-sync) or search "Schroedinger Sync" in Extensions.
 
 Works out of the box -- statusbar button appears, auto-sync watches for new sessions.
 
-### Python CLI (v1.0)
+### Python CLI (v0.1)
 
 ```bash
 git clone https://github.com/KeilerHirsch/schroedinger-sync.git
@@ -113,7 +113,7 @@ python sync_schroedinger.py --output ./out  # Custom output directory
 
 ---
 
-## What It Does Today (v1.5)
+## What It Does Today (v0.3)
 
 1. Finds all Claude Code JSONL session transcripts in `~/.claude/projects/`
 2. Parses conversations: user messages, assistant responses, tool usage
@@ -162,12 +162,12 @@ Environment variables:
 
 | Version | Status | What |
 |---------|--------|------|
-| **v1.0** | Done | Python CLI -- session parsing and Markdown export |
-| **v1.5** | Done | VS Code Extension -- auto-sync, statusbar integration |
+| **v0.1** | Done | Python CLI -- session parsing and Markdown export |
+| **v0.2** | Done | VS Code Extension -- auto-sync, statusbar integration |
 | **v0.3** | **New!** | **Desktop Chat Extraction** -- reads Claude Desktop conversations via official API (DPAPI + AES-256-GCM) |
-| **v2.0** | In Design | **AI Knowledge Graph** -- multi-AI parsing, fact extraction, conflict detection, encrypted storage |
-| **v2.5** | Planned | Browser extension, additional AI format support |
-| **v3.0** | Planned | Enterprise self-hosted, SSO/LDAP, audit logs, on-prem LLM support |
+| **v1.0** | In Design | **AI Knowledge Graph** -- multi-AI parsing, fact extraction, conflict detection, encrypted storage |
+| **v1.5** | Planned | Browser extension, additional AI format support |
+| **v2.0** | Planned | Enterprise self-hosted, SSO/LDAP, audit logs, on-prem LLM support |
 
 ### v0.3: Desktop Chat Extraction (NEW)
 
@@ -195,9 +195,9 @@ Requirements: `pip install pycryptodome pywin32` (Windows only for now, macOS/Li
 
 ---
 
-### v2.0 Preview: "Your AI Knowledge Graph"
+### v1.0 Preview: "Your AI Knowledge Graph"
 
-The next major version transforms Schroedinger Sync from a session dumper into a **cross-AI knowledge platform**:
+The first major release transforms Schroedinger Sync from a session dumper into a **cross-AI knowledge platform**:
 
 - **Multi-AI Parsing** -- Claude, Gemini, DeepSeek, ChatGPT in one unified store
 - **Fact Extraction** -- Automatically extracts people, dates, decisions, corrections from sessions
@@ -229,7 +229,7 @@ Each tool has strengths the others don't. The problem is they don't share contex
 
 > *"ChatGPT confidently repeated something Claude had already corrected three sessions ago. The correction existed -- but the AIs didn't talk to each other. I was done copy-pasting context between 4 different AI tools. So I built Schroedinger Sync."*
 
-This project started as a personal fix. A manual system of memory files, topic files, and rules that kept multiple AI instances aligned. It worked so well that automating it became the obvious next step. That's v2.0.
+This project started as a personal fix. A manual system of memory files, topic files, and rules that kept multiple AI instances aligned. It worked so well that automating it became the obvious next step. That's v1.0.
 
 ---
 

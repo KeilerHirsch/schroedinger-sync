@@ -152,10 +152,37 @@ Environment variables:
 | Version | Status | What |
 |---------|--------|------|
 | **v1.0** | Done | Python CLI -- session parsing and Markdown export |
-| **v1.5** | Current | VS Code Extension -- auto-sync, statusbar integration |
+| **v1.5** | Done | VS Code Extension -- auto-sync, statusbar integration |
+| **v0.3** | **New!** | **Desktop Chat Extraction** -- reads Claude Desktop conversations via official API (DPAPI + AES-256-GCM) |
 | **v2.0** | In Design | **AI Knowledge Graph** -- multi-AI parsing, fact extraction, conflict detection, encrypted storage |
 | **v2.5** | Planned | Browser extension, additional AI format support |
 | **v3.0** | Planned | Enterprise self-hosted, SSO/LDAP, audit logs, on-prem LLM support |
+
+### v0.3: Desktop Chat Extraction (NEW)
+
+While everyone else tries to hack local databases (LevelDB, IndexedDB, JSONL), we walked through the **front door**:
+
+```bash
+# Extract ALL your Claude Desktop conversations to Markdown
+python cli/extract_desktop_chats.py --output ./my-chats
+
+# Silent mode for automation (hooks, scheduled tasks)
+python cli/extract_desktop_chats.py --quiet
+```
+
+**How it works:**
+1. Reads the session cookie from Claude Desktop's Electron app (Windows DPAPI + AES-256-GCM)
+2. Calls the official `claude.ai` API -- your data, your app, your cookies
+3. Converts every conversation to clean, searchable Markdown
+4. Incremental: only downloads new conversations on subsequent runs
+
+**Why this matters:** 10+ developers tried reverse-engineering local file formats. We use the same API that claude.ai uses in your browser. No hack, no reverse engineering, no breaking changes when Anthropic updates their app.
+
+**This approach scales to ANY Electron/Chromium AI app:** ChatGPT, Gemini, DeepSeek -- they all have APIs + session cookies.
+
+Requirements: `pip install pycryptodome pywin32` (Windows only for now)
+
+---
 
 ### v2.0 Preview: "Your AI Knowledge Graph"
 

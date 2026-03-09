@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 import * as cp from "child_process";
 import { findSessionFiles, parseSession } from "./parser";
 import { generateSummary } from "./generator";
@@ -9,14 +10,15 @@ import { loadState, saveState, fileHash } from "./state";
 let statusBarItem: vscode.StatusBarItem;
 let fileWatcher: vscode.FileSystemWatcher | undefined;
 let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+let outputChannel: vscode.OutputChannel;
 
 function getSessionsDir(): string {
-  const home = process.env.USERPROFILE ?? process.env.HOME ?? "~";
+  const home = process.env.USERPROFILE || process.env.HOME || os.homedir();
   return path.join(home, ".claude", "projects");
 }
 
 function getStatePath(): string {
-  const home = process.env.USERPROFILE ?? process.env.HOME ?? "~";
+  const home = process.env.USERPROFILE || process.env.HOME || os.homedir();
   return path.join(home, ".claude", ".schroedinger_state.json");
 }
 
@@ -86,7 +88,6 @@ async function runSync(): Promise<number> {
   }
 
   let newSynced = 0;
-  const outputChannel = vscode.window.createOutputChannel("Schroedinger Sync");
 
   for (const session of sessions) {
     if (session.size < 1024) {
@@ -108,7 +109,7 @@ async function runSync(): Promise<number> {
       const summary = generateSummary(metadata, messages);
       const slug = metadata.slug ?? session.sessionId.slice(0, 12);
       const datePrefix = formatDate(session.modified);
-      const safeSlug = slug.replace(/ /g, "-").replace(/\//g, "-");
+      const safeSlug = slug.replace(/[<>:"/\\|?*\s]/g, "-");
       const outputFile = path.join(outputDir, `${datePrefix}_${safeSlug}.md`);
 
       fs.writeFileSync(outputFile, summary, "utf-8");
@@ -123,8 +124,8 @@ async function runSync(): Promise<number> {
         syncedAt: new Date().toISOString(),
       };
       newSynced++;
-    } catch (err: any) {
-      outputChannel.appendLine(`[ERROR] ${session.sessionId}: ${err.message}`);
+    } catch (err: unknown) {
+      outputChannel.appendLine(`[ERROR] ${session.sessionId}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -154,10 +155,10 @@ function formatDate(date: Date): string {
 function gitCommit(outputDir: string, message: string): void {
   try {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(outputDir);
-    cp.execFileSync("git", ["add", "-A"], { cwd, timeout: 30000 });
+    cp.execFileSync("git", ["add", outputDir], { cwd, timeout: 30000 });
     cp.execFileSync("git", ["commit", "-m", message], { cwd, timeout: 30000 });
-  } catch {
-    // Git commit failed silently
+  } catch (err: unknown) {
+    console.warn("Git commit failed:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -174,6 +175,9 @@ function scheduleDebouncedSync(): void {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  outputChannel = vscode.window.createOutputChannel("Schroedinger Sync");
+  context.subscriptions.push(outputChannel);
+
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = "schroedingerSync.syncNow";
   statusBarItem.text = "$(sync) Schroedinger";

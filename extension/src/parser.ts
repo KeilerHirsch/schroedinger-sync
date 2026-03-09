@@ -35,26 +35,44 @@ export function findSessionFiles(sessionsDir: string): SessionFile[] {
     return sessions;
   }
 
-  const entries = fs.readdirSync(sessionsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
+  const topEntries = fs.readdirSync(sessionsDir, { withFileTypes: true });
+  for (const topEntry of topEntries) {
+    if (!topEntry.isDirectory()) {
       continue;
     }
-    const projectDir = path.join(sessionsDir, entry.name);
-    const files = fs.readdirSync(projectDir);
-    for (const file of files) {
-      if (!file.endsWith(".jsonl")) {
-        continue;
+    const projectDir = path.join(sessionsDir, topEntry.name);
+    const subEntries = fs.readdirSync(projectDir, { withFileTypes: true });
+    for (const subEntry of subEntries) {
+      if (subEntry.isDirectory()) {
+        // Level 2: projects/<hash>/<session-uuid>.jsonl
+        const subDir = path.join(projectDir, subEntry.name);
+        const files = fs.readdirSync(subDir);
+        for (const file of files) {
+          if (!file.endsWith(".jsonl")) {
+            continue;
+          }
+          const filePath = path.join(subDir, file);
+          const stat = fs.statSync(filePath);
+          sessions.push({
+            path: filePath,
+            project: topEntry.name,
+            sessionId: path.basename(file, ".jsonl"),
+            size: stat.size,
+            modified: new Date(stat.mtimeMs),
+          });
+        }
+      } else if (subEntry.name.endsWith(".jsonl")) {
+        // Level 1 fallback: projects/<folder>/<file>.jsonl
+        const filePath = path.join(projectDir, subEntry.name);
+        const stat = fs.statSync(filePath);
+        sessions.push({
+          path: filePath,
+          project: topEntry.name,
+          sessionId: path.basename(subEntry.name, ".jsonl"),
+          size: stat.size,
+          modified: new Date(stat.mtimeMs),
+        });
       }
-      const filePath = path.join(projectDir, file);
-      const stat = fs.statSync(filePath);
-      sessions.push({
-        path: filePath,
-        project: entry.name,
-        sessionId: path.basename(file, ".jsonl"),
-        size: stat.size,
-        modified: new Date(stat.mtimeMs),
-      });
     }
   }
 

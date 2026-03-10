@@ -31,20 +31,22 @@ export function loadState(statePath: string): SyncState {
 }
 
 export function saveState(statePath: string, state: SyncState): void {
-  state.lastSync = new Date().toISOString();
+  const now = new Date().toISOString();
   const dir = path.dirname(statePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
   const data = {
     synced_sessions: state.syncedSessions,
-    last_sync: state.lastSync,
+    last_sync: now,
   };
+  state.lastSync = now;
   fs.writeFileSync(statePath, JSON.stringify(data, null, 2), "utf-8");
 }
 
 export function fileHash(filePath: string): string {
-  const stat = fs.statSync(filePath);
-  const input = `${stat.size}:${stat.mtimeMs}`;
-  return crypto.createHash("md5").update(input).digest("hex");
+  const hash = crypto.createHash("sha256");
+  const stream = fs.readFileSync(filePath);
+  hash.update(stream);
+  return hash.digest("hex").slice(0, 16);
 }

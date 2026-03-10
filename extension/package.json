@@ -14,7 +14,7 @@
   },
   "categories": ["Other"],
   "keywords": ["claude", "sync", "ai", "productivity", "markdown"],
-  "activationEvents": [],
+  "activationEvents": ["onStartupFinished"],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [

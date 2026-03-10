@@ -148,6 +148,9 @@ export async function parseSession(
         messages.push({ role: "user", content, timestamp: timestamp ?? null });
         metadata.totalTurns++;
       }
+    } else if (msgType === "progress" || msgType === "queue-operation" || msgType === "result") {
+      // Internal Claude Code messages — skip silently (not conversation content)
+      continue;
     } else if (msgType === "assistant") {
       const msg = obj.message ?? {};
       const contentBlocks = Array.isArray(msg.content) ? msg.content : [];

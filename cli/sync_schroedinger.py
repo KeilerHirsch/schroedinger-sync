@@ -1,83 +1,98 @@
 #!/usr/bin/env python3
 """
-Schroedinger Sync v1.0 - Automatic sync between Claude Desktop and VS Code
-https://github.com/KeilerHirsch/schroedinger-sync
+Schroedinger Sync v0.1 — Claude Code Session Sync
 
 Reads Claude Code JSONL session transcripts and generates readable Markdown summaries.
-Auto-updates CLAUDE.md memory and optionally commits to Git.
+Optionally commits to Git.
+
+https://github.com/KeilerHirsch/schroedinger-sync
 
 Author: KeilerHirsch
 License: MIT
 """
 
+import argparse
 import json
+import hashlib
+import logging
 import os
 import re
-import sys
-import hashlib
 import subprocess
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
+
+VERSION = "0.1.0"
+
+log = logging.getLogger("schroedinger")
 
 
 # === CONFIGURATION ===
 
-# Claude Code sessions directory
-CLAUDE_CODE_SESSIONS = Path(os.environ.get("USERPROFILE", "") or Path.home()) / ".claude" / "projects"
-
-# Output directory for synced session summaries
-SYNC_OUTPUT_DIR = Path(os.environ.get("SCHROEDINGER_OUTPUT",
-    os.path.join(".", "sync")))
-
-# Git auto-commit after sync
-GIT_AUTO_COMMIT = os.environ.get("SCHROEDINGER_GIT_COMMIT", "false").lower() == "true"
-
-# Max sessions to process (0 = all)
-try:
-    MAX_SESSIONS = int(os.environ.get("SCHROEDINGER_MAX_SESSIONS", "0"))
-except ValueError:
-    print("[WARN] SCHROEDINGER_MAX_SESSIONS is not a valid integer, using 0")
-    MAX_SESSIONS = 0
-
-# State file to track what we've already synced
-STATE_FILE = Path(os.environ.get("USERPROFILE", "") or Path.home()) / ".claude" / ".schroedinger_state.json"
+def get_sessions_dir():
+    return Path(os.environ.get("USERPROFILE", "") or Path.home()) / ".claude" / "projects"
 
 
-def load_state():
-    """Load sync state (which sessions were already processed)."""
-    if STATE_FILE.exists():
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+def get_state_path():
+    return Path(os.environ.get("USERPROFILE", "") or Path.home()) / ".claude" / ".schroedinger_state.json"
+
+
+def load_state(state_path):
+    """Load sync state with recovery for corrupted files."""
+    try:
+        if state_path.exists():
+            with open(state_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return {
+                "synced_sessions": data.get("synced_sessions", {}),
+                "last_sync": data.get("last_sync"),
+            }
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        log.warning("Corrupted state file, starting fresh: %s", e)
     return {"synced_sessions": {}, "last_sync": None}
 
 
-def save_state(state):
+def save_state(state_path, state):
     """Save sync state."""
     state["last_sync"] = datetime.now(timezone.utc).isoformat()
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(state_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
 
 
-def find_session_files():
-    """Find all JSONL session files across all projects."""
+def find_session_files(sessions_dir):
+    """Find all JSONL session files across all projects (2-level deep)."""
     sessions = []
-    if not CLAUDE_CODE_SESSIONS.exists():
-        print(f"[WARN] Sessions directory not found: {CLAUDE_CODE_SESSIONS}")
+    if not sessions_dir.exists():
+        log.warning("Sessions directory not found: %s", sessions_dir)
         return sessions
 
-    for project_dir in CLAUDE_CODE_SESSIONS.iterdir():
+    for project_dir in sessions_dir.iterdir():
         if not project_dir.is_dir():
             continue
-        for jsonl_file in project_dir.glob("*.jsonl"):
-            stat = jsonl_file.stat()
-            sessions.append({
-                "path": jsonl_file,
-                "project": project_dir.name,
-                "session_id": jsonl_file.stem,
-                "size": stat.st_size,
-                "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
-            })
+
+        for entry in project_dir.iterdir():
+            if entry.is_dir():
+                # Level 2: projects/<hash>/<session-uuid>.jsonl
+                for jsonl_file in entry.glob("*.jsonl"):
+                    stat = jsonl_file.stat()
+                    sessions.append({
+                        "path": jsonl_file,
+                        "project": project_dir.name,
+                        "session_id": jsonl_file.stem,
+                        "size": stat.st_size,
+                        "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                    })
+            elif entry.suffix == ".jsonl":
+                # Level 1 fallback: projects/<folder>/<file>.jsonl
+                stat = entry.stat()
+                sessions.append({
+                    "path": entry,
+                    "project": project_dir.name,
+                    "session_id": entry.stem,
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+                })
 
     sessions.sort(key=lambda s: s["modified"], reverse=True)
     return sessions
@@ -113,26 +128,22 @@ def parse_session(jsonl_path):
             msg_type = obj.get("type")
             timestamp = obj.get("timestamp")
 
-            # Track time range
             if timestamp:
                 if metadata["start_time"] is None or timestamp < metadata["start_time"]:
                     metadata["start_time"] = timestamp
                 if metadata["end_time"] is None or timestamp > metadata["end_time"]:
                     metadata["end_time"] = timestamp
 
-            # Extract metadata from system messages
             if msg_type == "system":
                 metadata["cwd"] = metadata["cwd"] or obj.get("cwd")
                 metadata["git_branch"] = metadata["git_branch"] or obj.get("gitBranch")
                 metadata["version"] = metadata["version"] or obj.get("version")
                 metadata["slug"] = metadata["slug"] or obj.get("slug")
 
-            # Extract user messages
             elif msg_type == "user":
                 msg = obj.get("message", {})
                 content = msg.get("content", "")
                 if isinstance(content, list):
-                    # Multi-part content (text + images etc.)
                     text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
                     content = "\n".join(text_parts)
                 if content and content.strip():
@@ -143,7 +154,6 @@ def parse_session(jsonl_path):
                     })
                     metadata["total_turns"] += 1
 
-            # Extract assistant messages
             elif msg_type == "assistant":
                 msg = obj.get("message", {})
                 content_blocks = msg.get("content", [])
@@ -153,8 +163,7 @@ def parse_session(jsonl_path):
                         if block.get("type") == "text":
                             text_parts.append(block.get("text", ""))
                         elif block.get("type") == "tool_use":
-                            tool_name = block.get("name", "unknown")
-                            metadata["tool_uses"].append(tool_name)
+                            metadata["tool_uses"].append(block.get("name", "unknown"))
                 if text_parts:
                     messages.append({
                         "role": "assistant",
@@ -163,7 +172,7 @@ def parse_session(jsonl_path):
                     })
 
     if skipped_lines > 0:
-        print(f"  [WARN] {skipped_lines} malformed JSONL line(s) skipped in {jsonl_path.name}")
+        log.warning("%d malformed JSONL line(s) skipped in %s", skipped_lines, jsonl_path.name)
 
     return metadata, messages
 
@@ -172,7 +181,6 @@ def generate_summary(metadata, messages, max_preview=500):
     """Generate a Markdown summary of a session."""
     lines = []
 
-    # Header
     slug = metadata.get("slug", "unknown-session")
     start = metadata.get("start_time", "?")
     if start and start != "?":
@@ -187,156 +195,150 @@ def generate_summary(metadata, messages, max_preview=500):
     lines.append(f"# Session: {slug}")
     lines.append("")
     lines.append(f"**Session ID:** `{metadata['session_id']}`")
-    lines.append(f"**Datum:** {date_str}")
-    lines.append(f"**Projekt:** `{metadata.get('cwd', '?')}`")
+    lines.append(f"**Date:** {date_str}")
+    lines.append(f"**Project:** `{metadata.get('cwd', '?')}`")
     lines.append(f"**Branch:** {metadata.get('git_branch', '?')}")
     lines.append(f"**Claude Code:** v{metadata.get('version', '?')}")
     lines.append(f"**Turns:** {metadata['total_turns']}")
     lines.append("")
 
-    # Tool usage statistics
     if metadata["tool_uses"]:
         tool_counts = {}
         for t in metadata["tool_uses"]:
             tool_counts[t] = tool_counts.get(t, 0) + 1
-        lines.append("## Tool-Nutzung")
+        lines.append("## Tool Usage")
         lines.append("")
         for tool, count in sorted(tool_counts.items(), key=lambda x: -x[1])[:15]:
             lines.append(f"- {tool}: {count}x")
         lines.append("")
 
-    # Conversation flow (user messages as outline)
-    lines.append("## Gesprächsverlauf")
+    lines.append("## Conversation Flow")
     lines.append("")
     user_msgs = [m for m in messages if m["role"] == "user"]
-    for i, msg in enumerate(user_msgs[:50], 1):  # Max 50 user messages
+    for i, msg in enumerate(user_msgs[:50], 1):
         preview = msg["content"][:200].replace("\n", " ")
         if len(msg["content"]) > 200:
             preview += "..."
         lines.append(f"{i}. **User:** {preview}")
 
     if len(user_msgs) > 50:
-        lines.append(f"\n*... und {len(user_msgs) - 50} weitere Nachrichten*")
+        lines.append(f"\n*... and {len(user_msgs) - 50} more messages*")
 
     lines.append("")
 
-    # Key assistant responses (first and last)
     assistant_msgs = [m for m in messages if m["role"] == "assistant"]
     if assistant_msgs:
-        lines.append("## Erste Antwort (Auszug)")
+        lines.append("## First Response (excerpt)")
         lines.append("")
         first = assistant_msgs[0]["content"][:max_preview]
         if len(assistant_msgs[0]["content"]) > max_preview:
-            first += "\n\n*[...gekürzt]*"
+            first += "\n\n*[...truncated]*"
         lines.append(first)
         lines.append("")
 
         if len(assistant_msgs) > 1:
-            lines.append("## Letzte Antwort (Auszug)")
+            lines.append("## Last Response (excerpt)")
             lines.append("")
             last = assistant_msgs[-1]["content"][:max_preview]
             if len(assistant_msgs[-1]["content"]) > max_preview:
-                last += "\n\n*[...gekürzt]*"
+                last += "\n\n*[...truncated]*"
             lines.append(last)
             lines.append("")
 
     lines.append("---")
-    lines.append(f"*Generiert von Schroedinger Sync v1.0 | {datetime.now().strftime('%Y-%m-%d %H:%M')}*")
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    lines.append(f"*Generated by Schroedinger Sync v{VERSION} | {now_str}*")
 
     return "\n".join(lines)
 
 
-def file_hash(path):
+def file_hash(filepath):
     """Quick hash of file for change detection."""
-    s = path.stat()
-    return hashlib.md5(f"{s.st_size}:{s.st_mtime}".encode()).hexdigest()
+    stat = filepath.stat()
+    return hashlib.md5(f"{stat.st_size}:{stat.st_mtime}".encode()).hexdigest()
 
 
-def git_commit(repo_path, message):
-    """Auto-commit changes in a git repo."""
+def git_commit(output_dir, message):
+    """Auto-commit sync output in a git repo."""
     try:
-        add_result = subprocess.run(["git", "add", "-A"], cwd=repo_path, capture_output=True, text=True, timeout=30)
+        cwd = str(Path(output_dir).parent)
+        add_result = subprocess.run(
+            ["git", "add", str(output_dir)],
+            cwd=cwd, capture_output=True, text=True, timeout=30
+        )
         if add_result.returncode != 0:
-            print(f"[GIT] git add failed: {add_result.stderr[:200]}")
+            log.error("git add failed: %s", add_result.stderr[:200])
             return
         result = subprocess.run(
             ["git", "commit", "-m", message],
-            cwd=repo_path, capture_output=True, text=True, timeout=30
+            cwd=cwd, capture_output=True, text=True, timeout=30
         )
         if result.returncode == 0:
-            print(f"[GIT] Committed: {message}")
+            log.info("Committed: %s", message)
+        elif "nothing to commit" in (result.stdout + result.stderr):
+            log.info("Nothing to commit")
         else:
-            if "nothing to commit" in result.stdout:
-                print(f"[GIT] Nothing to commit")
-            else:
-                print(f"[GIT] Commit failed: {result.stderr[:200]}")
-    except Exception as e:
-        print(f"[GIT] Error: {e}")
+            log.error("Commit failed: %s", result.stderr[:200])
+    except (OSError, subprocess.TimeoutExpired) as e:
+        log.error("Git error: %s", e)
 
 
-def sync():
-    """Main sync function."""
-    print(f"=== Schroedinger Sync v1.0 ===")
-    print(f"Zeitpunkt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print()
+def sync(output_dir, git_auto_commit, max_sessions):
+    """Main sync function. Returns (new_synced, total_found)."""
+    sessions_dir = get_sessions_dir()
+    state_path = get_state_path()
 
-    state = load_state()
-    sessions = find_session_files()
+    state = load_state(state_path)
+    sessions = find_session_files(sessions_dir)
 
     if not sessions:
-        print("[INFO] Keine Sessions gefunden.")
-        return
+        log.info("No sessions found.")
+        return 0, 0
 
-    print(f"[INFO] {len(sessions)} Session(s) gefunden")
+    log.info("%d session(s) found", len(sessions))
 
-    # Create output directory
-    SYNC_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     processed = 0
     new_synced = 0
 
     for session in sessions:
-        if MAX_SESSIONS > 0 and processed >= MAX_SESSIONS:
+        if max_sessions > 0 and processed >= max_sessions:
             break
 
         session_id = session["session_id"]
         current_hash = file_hash(session["path"])
 
-        # Skip if already synced and unchanged
         if session_id in state["synced_sessions"]:
             if state["synced_sessions"][session_id].get("hash") == current_hash:
                 continue
 
-        # Skip tiny sessions (< 1KB = probably just system messages)
         if session["size"] < 1024:
             continue
 
         processed += 1
-        print(f"\n[SYNC] Verarbeite: {session_id[:12]}... ({session['size'] / 1024:.0f} KB)")
+        log.info("Processing: %s... (%d KB)", session_id[:12], session["size"] // 1024)
 
         try:
             metadata, messages = parse_session(session["path"])
 
-            # Skip sessions with no actual conversation
             if metadata["total_turns"] == 0:
-                print(f"  -> Keine User-Nachrichten, übersprungen")
+                log.debug("No user messages, skipped: %s", session_id[:12])
                 continue
 
             summary = generate_summary(metadata, messages)
 
-            # Write summary file
             slug = metadata.get("slug") or session_id[:12]
             date_prefix = session["modified"].strftime("%Y%m%d")
             safe_slug = re.sub(r'[<>:"/\\|?*\s]', '-', slug)
-            output_file = SYNC_OUTPUT_DIR / f"{date_prefix}_{safe_slug}.md"
+            output_file = output_dir / f"{date_prefix}_{safe_slug}.md"
 
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(summary)
 
-            print(f"  -> Geschrieben: {output_file.name}")
-            print(f"     {metadata['total_turns']} Turns, {len(metadata['tool_uses'])} Tool-Aufrufe")
+            log.info("  -> %s (%d turns, %d tool calls)",
+                     output_file.name, metadata["total_turns"], len(metadata["tool_uses"]))
 
-            # Update state
             state["synced_sessions"][session_id] = {
                 "hash": current_hash,
                 "output": str(output_file),
@@ -346,51 +348,60 @@ def sync():
             new_synced += 1
 
         except (OSError, json.JSONDecodeError, ValueError, KeyError) as e:
-            print(f"  -> FEHLER: {e}")
+            log.error("Failed: %s — %s", session_id[:12], e)
 
-    save_state(state)
+    save_state(state_path, state)
 
-    print(f"\n[DONE] {new_synced} neue Session(s) synchronisiert")
-    print(f"       Ausgabe: {SYNC_OUTPUT_DIR}")
+    log.info("Done: %d new session(s) synced to %s", new_synced, output_dir)
 
-    # Git auto-commit if enabled
-    if GIT_AUTO_COMMIT and new_synced > 0:
+    if git_auto_commit and new_synced > 0:
         git_commit(
-            SYNC_OUTPUT_DIR.parent,
+            str(output_dir),
             f"sync: {new_synced} session(s) synced by Schroedinger Sync"
         )
 
-    return new_synced
+    return new_synced, len(sessions)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="sync_schroedinger",
+        description=f"Schroedinger Sync v{VERSION} — Claude Code Session Sync",
+    )
+    parser.add_argument("--git", action="store_true",
+                        help="Auto-commit after sync")
+    parser.add_argument("--max", type=int, default=0, metavar="N",
+                        help="Max sessions to process (0 = all)")
+    parser.add_argument("--output", type=Path,
+                        default=Path(os.environ.get("SCHROEDINGER_OUTPUT", "./sync")),
+                        help="Output directory for summaries (default: ./sync)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Verbose output (DEBUG level)")
+    parser.add_argument("--quiet", "-q", action="store_true",
+                        help="Suppress output (only errors)")
+    parser.add_argument("--version", action="version",
+                        version=f"Schroedinger Sync v{VERSION}")
+    args = parser.parse_args()
+
+    if args.quiet:
+        level = logging.ERROR
+    elif args.verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="[%(levelname)s] %(message)s",
+    )
+
+    git_auto_commit = args.git or os.environ.get("SCHROEDINGER_GIT_COMMIT", "false").lower() == "true"
+
+    new_synced, total = sync(args.output, git_auto_commit, args.max)
+
+    if total == 0:
+        sys.exit(3)  # No sessions found at all
+    sys.exit(0)
 
 
 if __name__ == "__main__":
-    # CLI arguments
-    if "--help" in sys.argv or "-h" in sys.argv:
-        print("Schroedinger Sync v1.0")
-        print("Usage: python sync_schroedinger.py [OPTIONS]")
-        print()
-        print("Options:")
-        print("  --git          Auto-commit after sync")
-        print("  --max N        Max sessions to process")
-        print("  --output DIR   Output directory for summaries")
-        print("  --help         Show this help")
-        sys.exit(0)
-
-    if "--git" in sys.argv:
-        GIT_AUTO_COMMIT = True
-
-    if "--max" in sys.argv:
-        idx = sys.argv.index("--max")
-        if idx + 1 < len(sys.argv):
-            try:
-                MAX_SESSIONS = int(sys.argv[idx + 1])
-            except ValueError:
-                print(f"[ERROR] --max requires an integer, got: {sys.argv[idx + 1]}")
-                sys.exit(1)
-
-    if "--output" in sys.argv:
-        idx = sys.argv.index("--output")
-        if idx + 1 < len(sys.argv):
-            SYNC_OUTPUT_DIR = Path(sys.argv[idx + 1])
-
-    sync()
+    main()

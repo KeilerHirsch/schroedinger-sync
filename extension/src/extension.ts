@@ -87,9 +87,14 @@ async function runSync(): Promise<number> {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
+  const MAX_BATCH = 50;
   let newSynced = 0;
 
   for (const session of sessions) {
+    if (newSynced >= MAX_BATCH) {
+      outputChannel.appendLine(`[SYNC] Batch limit (${MAX_BATCH}) reached — remaining sessions next run.`);
+      break;
+    }
     if (session.size < 1024) {
       continue;
     }
@@ -158,7 +163,8 @@ function gitCommit(outputDir: string, message: string): void {
     cp.execFileSync("git", ["add", outputDir], { cwd, timeout: 30000 });
     cp.execFileSync("git", ["commit", "-m", message], { cwd, timeout: 30000 });
   } catch (err: unknown) {
-    console.warn("Git commit failed:", err instanceof Error ? err.message : String(err));
+    const msg = err instanceof Error ? err.message : String(err);
+    outputChannel.appendLine(`[GIT] Commit failed: ${msg}`);
   }
 }
 
@@ -199,7 +205,9 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(fileWatcher);
   }
 
-  countNewSessions().then((count) => updateStatusBar(count));
+  countNewSessions()
+    .then((count) => updateStatusBar(count))
+    .catch((err) => outputChannel.appendLine(`[ERROR] Count failed: ${err instanceof Error ? err.message : String(err)}`));
 }
 
 export function deactivate(): void {

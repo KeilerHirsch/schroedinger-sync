@@ -137,7 +137,7 @@ async function runSync(): Promise<number> {
   saveState(statePath, state);
 
   if (gitAutoCommit && newSynced > 0) {
-    gitCommit(outputDir, `sync: ${newSynced} session(s) synced by Schroedinger Sync`);
+    await gitCommit(outputDir, `sync: ${newSynced} session(s) synced by Schroedinger Sync`);
   }
 
   if (newSynced > 0) {
@@ -157,11 +157,24 @@ function formatDate(date: Date): string {
   return `${y}${m}${d}`;
 }
 
-function gitCommit(outputDir: string, message: string): void {
+async function gitCommit(outputDir: string, message: string): Promise<void> {
+  const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(outputDir);
+
+  const execFileAsync = (cmd: string, args: string[]): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      cp.execFile(cmd, args, { cwd, timeout: 30000 }, (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  };
+
   try {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? path.dirname(outputDir);
-    cp.execFileSync("git", ["add", outputDir], { cwd, timeout: 30000 });
-    cp.execFileSync("git", ["commit", "-m", message], { cwd, timeout: 30000 });
+    await execFileAsync("git", ["add", outputDir]);
+    await execFileAsync("git", ["commit", "-m", message]);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     outputChannel.appendLine(`[GIT] Commit failed: ${msg}`);

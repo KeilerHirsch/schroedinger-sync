@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Schroedinger Sync v0.1 — Claude Code Session Sync
+Schroedinger Sync v0.3 — Claude Code Session Sync
 
 Reads Claude Code JSONL session transcripts and generates readable Markdown summaries.
 Optionally commits to Git.
@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 
 log = logging.getLogger("schroedinger")
 
@@ -310,9 +310,11 @@ def generate_summary(metadata, messages, max_preview=500):
 
 
 def file_hash(filepath):
-    """Quick hash of file for change detection."""
-    stat = filepath.stat()
-    return hashlib.md5(f"{stat.st_size}:{stat.st_mtime}".encode()).hexdigest()
+    """Quick hash of file content for change detection (SHA-256, first 8KB, 16 hex chars)."""
+    h = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        h.update(f.read(8192))
+    return h.hexdigest()[:16]
 
 
 def git_commit(output_dir, message):

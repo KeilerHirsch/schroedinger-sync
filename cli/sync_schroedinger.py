@@ -176,6 +176,44 @@ def parse_session(jsonl_path):
 
     return metadata, messages
 
+def extract_project_context(cwd):
+    """Liest Projekt-Gedächtnis und prüft auf Permissions-Wildwuchs."""
+    import json
+    from pathlib import Path
+    
+    context = {}
+    if not cwd:
+        return context
+        
+    claude_dir = Path(cwd) / ".claude"
+    
+    # 1. Amnesie-Schutz: Aktives Gedächtnis einlesen
+    memory_file = claude_dir / "projects" / "memory" / "MEMORY.md"
+    if memory_file.exists():
+        try:
+            with open(memory_file, "r", encoding="utf-8") as f:
+                context["memory"] = f.read().strip()
+        except Exception as e:
+            log.debug("Konnte MEMORY.md nicht lesen: %s", e)
+
+    # 2. Parser-Kollaps-Schutz: settings.local.json prüfen
+    settings_file = claude_dir / "settings.local.json"
+    if settings_file.exists():
+        try:
+            size = settings_file.stat().st_size
+            if size > 20000:
+                context["settings_warning"] = f"⚠️ KRITISCH: settings.local.json ist extrem groß ({size // 1024} KB). Möglicher Permissions-Wildwuchs!"
+            
+            with open(settings_file, "r", encoding="utf-8") as f:
+                settings = json.load(f)
+                if "bypassPermissions" in settings:
+                    context["bypass_permissions"] = settings["bypassPermissions"]
+        except json.JSONDecodeError:
+            context["settings_error"] = "⚠️ ERROR: Parser-Kollaps! settings.local.json ist korrupt."
+        except Exception:
+            pass
+
+    return context
 
 def generate_summary(metadata, messages, max_preview=500):
     """Generate a Markdown summary of a session."""
@@ -201,7 +239,26 @@ def generate_summary(metadata, messages, max_preview=500):
     lines.append(f"**Claude Code:** v{metadata.get('version', '?')}")
     lines.append(f"**Turns:** {metadata['total_turns']}")
     lines.append("")
-
+# --- System Status & Gedächtnis integrieren ---
+    project_context = extract_project_context(metadata.get("cwd"))
+    
+    if project_context:
+        lines.append("## System Status & Projekt-Gedächtnis")
+        lines.append("")
+        if "settings_warning" in project_context:
+            lines.append(f"> {project_context['settings_warning']}")
+        if "settings_error" in project_context:
+            lines.append(f"> {project_context['settings_error']}")
+        if "bypass_permissions" in project_context:
+            lines.append(f"- **YOLO-Modus (Bypass):** `{project_context['bypass_permissions']}`")
+        
+        if "memory" in project_context:
+            lines.append("\n### Aktives Claude-Gedächtnis (MEMORY.md)")
+            lines.append("```markdown")
+            lines.append(project_context["memory"])
+            lines.append("```")
+        lines.append("")
+        
     if metadata["tool_uses"]:
         tool_counts = {}
         for t in metadata["tool_uses"]:

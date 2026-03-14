@@ -27,7 +27,25 @@ export interface SessionMetadata {
   totalTurns: number;
   toolUses: string[];
 }
-
+export interface SessionMetadata {
+  sessionId: string;
+  cwd: string | null;
+  gitBranch: string | null;
+  version: string | null;
+  slug: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  totalTurns: number;
+  toolUses: string[];
+  
+  // --- NEU: Unsere Fehlerdiagnostik-Kabel ---
+  projectContext?: {
+    memoryMd?: string;
+    settingsBloatWarning?: string;
+    settingsError?: string;
+    bypassPermissions?: boolean;
+  };
+}
 export function findSessionFiles(sessionsDir: string): SessionFile[] {
   const sessions: SessionFile[] = [];
 
@@ -173,6 +191,41 @@ export async function parseSession(
       }
     }
   }
+} // Ende der if (msgType === "assistant") Schleife
+
+  } // Ende der for await (const line of rl) Schleife
+
+  // --- NEU: Projekt-Kontext auslesen (Amnesie & Wildwuchs Fix) ---
+  if (metadata.cwd) {
+    metadata.projectContext = {};
+    const claudeDir = path.join(metadata.cwd, ".claude");
+    
+    // 1. Gedächtnis lesen (Amnesie-Fix)
+    const memoryFile = path.join(claudeDir, "projects", "memory", "MEMORY.md");
+    if (fs.existsSync(memoryFile)) {
+      try {
+        metadata.projectContext.memoryMd = fs.readFileSync(memoryFile, "utf-8").trim();
+      } catch (e) {}
+    }
+
+    // 2. Settings prüfen (Wildwuchs-Fix)
+    const settingsFile = path.join(claudeDir, "settings.local.json");
+    if (fs.existsSync(settingsFile)) {
+      try {
+        const stats = fs.statSync(settingsFile);
+        if (stats.size > 20000) {
+          metadata.projectContext.settingsBloatWarning = `⚠️ KRITISCH: settings.local.json ist extrem groß (${Math.round(stats.size / 1024)} KB). Möglicher Permissions-Wildwuchs!`;
+        }
+        const settings = JSON.parse(fs.readFileSync(settingsFile, "utf-8"));
+        if (settings.bypassPermissions !== undefined) {
+          metadata.projectContext.bypassPermissions = settings.bypassPermissions;
+        }
+      } catch (e) {
+        metadata.projectContext.settingsError = "⚠️ ERROR: Parser-Kollaps! settings.local.json ist korrupt.";
+      }
+    }
+  }
+  // --- ENDE NEU ---
 
   return { metadata, messages };
 }

@@ -36,7 +36,30 @@ export function generateSummary(
   lines.push(`**Claude Code:** v${metadata.version ?? "?"}`);
   lines.push(`**Turns:** ${metadata.totalTurns}`);
   lines.push("");
+// --- NEU: System Status rendern ---
+  if (metadata.projectContext) {
+    lines.push("## System Status & Projekt-Gedächtnis");
+    lines.push("");
+    
+    if (metadata.projectContext.settingsBloatWarning) {
+      lines.push(`> ${metadata.projectContext.settingsBloatWarning}`);
+    }
+    if (metadata.projectContext.settingsError) {
+      lines.push(`> ${metadata.projectContext.settingsError}`);
+    }
+    if (metadata.projectContext.bypassPermissions !== undefined) {
+      lines.push(`- **YOLO-Modus (Bypass):** \`${metadata.projectContext.bypassPermissions}\``);
+    }
 
+    if (metadata.projectContext.memoryMd) {
+      lines.push("\n### Aktives Claude-Gedächtnis (MEMORY.md)");
+      lines.push("```markdown");
+      lines.push(metadata.projectContext.memoryMd);
+      lines.push("```");
+    }
+    lines.push("");
+  }
+  // --- ENDE NEU ---
   if (metadata.toolUses.length > 0) {
     const toolCounts: Record<string, number> = {};
     for (const t of metadata.toolUses) {

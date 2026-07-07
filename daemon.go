@@ -4,7 +4,8 @@
 // AND updated conversations to Markdown, diffing against a persisted state file so
 // each cycle only re-fetches what actually changed.
 //
-// Why a Task-Scheduler logon task and NOT a classic Windows service:
+// Why a per-user logon autostart (Startup-folder .vbs, not the Windows Task Scheduler
+// API — see startupVbsPath below) and NOT a classic Windows service:
 // the DPAPI master key is user-scoped and the CDP harvest needs a *visible* Chrome
 // (Cloudflare blocks headless). A session-0 LocalSystem service can do neither — it
 // can't decrypt the user's cookies and can't show a browser on the user's desktop.
@@ -54,19 +55,29 @@ func loadState(outDir string) *syncState {
 	if err != nil {
 		return s // first run
 	}
-	_ = json.Unmarshal(b, s)
+	_ = json.Unmarshal(b, s) // corrupt/partial state file -> fall through to a fresh syncState, same as first-run
 	if s.Conversations == nil {
 		s.Conversations = map[string]string{}
 	}
 	return s
 }
 
+// saveState writes atomically: marshal to a temp file in the same directory, then rename
+// over the target. A plain os.WriteFile can be interrupted mid-write (crash, or two
+// instances racing against the same outDir) and leave a truncated/corrupt
+// .sync-state.json; os.Rename onto an existing file is atomic on the same volume on both
+// Windows and POSIX, so the state file is always either the complete old version or the
+// complete new one, never a partial write.
 func saveState(outDir string, s *syncState) error {
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(statePath(outDir), b, 0o600)
+	tmp := statePath(outDir) + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, statePath(outDir))
 }
 
 // logSink is where logf writes. Default stdout; the daemon redirects it to a MultiWriter
@@ -353,7 +364,17 @@ func startupVbsPath() string {
 func vbsLauncherContent(exe, outDir string) string {
 	argsPart := " tray"
 	if outDir != "" {
-		argsPart = fmt.Sprintf(` tray ""%s""`, outDir)
+		// outDir is a caller-supplied CLI arg (install-task's os.Args[2], see installTask
+		// below) — it may itself contain a literal " character. Left unescaped, that "
+		// would terminate the ""..."" quoted-argument sequence early and splice whatever
+		// follows as new, attacker-controlled VBScript into a file Windows executes
+		// unattended at every logon. Double it first, per VBScript's own quote-escaping
+		// convention, exactly like exe already is below — this mirrors doing the same
+		// escaping this function already relies on, just applied to untrusted input too.
+		// exe (os.Executable()'s own result) needs no such escaping: a Windows path
+		// structurally cannot contain ", it's a reserved filename character.
+		escapedOutDir := strings.ReplaceAll(outDir, `"`, `""`)
+		argsPart = fmt.Sprintf(` tray ""%s""`, escapedOutDir)
 	}
 	return "' GSOC Schroedinger live-sync daemon - autostart at logon (hidden console, visible tray icon)\r\n" +
 		fmt.Sprintf("CreateObject(\"WScript.Shell\").Run \"\"\"%s\"\"%s\", 0, False\r\n", exe, argsPart)

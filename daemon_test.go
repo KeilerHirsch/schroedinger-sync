@@ -29,6 +29,15 @@ func TestVbsLauncherContent(t *testing.T) {
 			outDir:  `C:\Users\Test\My Data\desktop-chats`,
 			wantCmd: `"C:\Program Files\schroedinger-sync.exe" tray "C:\Users\Test\My Data\desktop-chats"`,
 		},
+		{
+			// Proves the fix for the VBScript-injection bug: an outDir containing a
+			// literal " must round-trip as data, not terminate the quoted argument early
+			// and splice extra VBScript into the generated (unattended, logon-run) file.
+			name:    "with outDir containing an embedded quote",
+			exe:     `C:\Program Files\schroedinger-sync.exe`,
+			outDir:  `C:\Users\Test\quo"ted\desktop-chats`,
+			wantCmd: `"C:\Program Files\schroedinger-sync.exe" tray "C:\Users\Test\quo"ted\desktop-chats"`,
+		},
 	}
 	runRe := regexp.MustCompile(`\.Run "(.*)", 0, False`)
 	for _, c := range cases {

@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -26,6 +27,13 @@ func RegisterSecret(s string) {
 	}
 	secretsMu.Lock()
 	defer secretsMu.Unlock()
+	for _, existing := range secrets {
+		if existing == s {
+			return // already registered — readSessionKey re-registers the same value every
+			// cycle in watch/tray mode; without this the slice would grow unboundedly over
+			// a long-running daemon's lifetime instead of staying at a handful of entries.
+		}
+	}
 	secrets = append(secrets, s)
 }
 
@@ -43,6 +51,20 @@ func redact(s string) string {
 		}
 	}
 	return s
+}
+
+// chromedpLogf routes chromedp's own internal log/error output through the same
+// redaction the rest of this program's output gets. Unwired, chromedp defaults to Go's
+// stdlib log.Printf (which targets os.Stderr) for BOTH its regular and error-level
+// messages — entirely bypassing installStdoutRedactor below, which only ever wraps
+// os.Stdout. Since network.Enable() (cdp.go) is active for the whole session, chromedp
+// is processing full CDP network events — including the injected sessionKey cookie
+// header — internally the entire time; an unexpected/malformed dispatch condition logs
+// a raw protocol message via exactly this path (see chromedp's browser.go). Passed to
+// chromedp.WithErrorf/WithLogf in cdp.go's openClaudeSession, which override chromedp's
+// internal b.logf/b.errf fields directly (verified against chromedp v0.15.1 source).
+func chromedpLogf(format string, args ...any) {
+	fmt.Fprintln(os.Stderr, redact(fmt.Sprintf(format, args...)))
 }
 
 // installStdoutRedactor swaps os.Stdout for the write end of a pipe, scrubbing every

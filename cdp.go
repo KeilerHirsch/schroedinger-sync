@@ -28,9 +28,15 @@ func awaitPromise(p *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {
 	return p.WithAwaitPromise(true)
 }
 
+// trunc truncates s to at most n runes (not bytes) — a byte-indexed s[:n] can split a
+// multi-byte UTF-8 rune in half, producing invalid UTF-8 in whatever the result feeds
+// into (a filename, via sanitize() below; a log/diagnostic line). Conversation and
+// project titles here are frequently German (umlauts, ß) or contain emoji, so a
+// mid-rune cut is a real, reachable case, not a theoretical one.
 func trunc(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
 	}
 	return s
 }
@@ -94,7 +100,12 @@ func openClaudeSession() (get func(string) (string, error), rawGet func(string) 
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
 	)
 	allocCtx, cancelA := chromedp.NewExecAllocator(context.Background(), opts...)
-	ctx, cancelC := chromedp.NewContext(allocCtx)
+	// WithErrorf/WithLogf override chromedp's internal b.logf/b.errf directly (verified
+	// against chromedp v0.15.1 source) — without them chromedp defaults to Go's stdlib
+	// log.Printf (targets os.Stderr) for its own internal messages, which would bypass
+	// installStdoutRedactor entirely. See chromedpLogf (security.go) for why this matters
+	// while network.Enable() is processing the injected sessionKey cookie all session long.
+	ctx, cancelC := chromedp.NewContext(allocCtx, chromedp.WithErrorf(chromedpLogf), chromedp.WithLogf(chromedpLogf))
 	ctx, cancelT := context.WithTimeout(ctx, 30*time.Minute)
 	teardown = func() { cancelT(); cancelC(); cancelA() }
 
@@ -192,6 +203,14 @@ func resolveOrg(get func(string) (string, error)) (string, error) {
 	}
 	if json.Unmarshal([]byte(body), &orgs) != nil || len(orgs) == 0 {
 		return "", fmt.Errorf("cannot parse orgs: %s", trunc(body, 200))
+	}
+	// This tool only ever harvests orgs[0]. Most accounts have exactly one organization
+	// (a personal workspace). If the account also belongs to a Team org, that second
+	// organization's conversations/docs/memory are silently NOT harvested — nothing else
+	// in this codebase surfaces that gap. Make it visible instead of leaving "did I get
+	// everything?" unanswerable.
+	if len(orgs) > 1 {
+		logf("WARNING: account has %d organizations — only harvesting the first (%s); any other org's conversations/docs/memory are NOT synced", len(orgs), orgs[0].UUID)
 	}
 	return orgs[0].UUID, nil
 }
@@ -338,9 +357,7 @@ var reSpaces = regexp.MustCompile(`\s+`)
 func sanitize(name string) string {
 	s := reBadChars.ReplaceAllString(name, "")
 	s = reSpaces.ReplaceAllString(strings.TrimSpace(s), "_")
-	if len(s) > 80 {
-		s = s[:80]
-	}
+	s = trunc(s, 80) // rune-safe — see trunc's doc comment
 	if s == "" {
 		return "Untitled"
 	}

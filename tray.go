@@ -17,10 +17,24 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gogpu/systray"
 )
+
+// statusHolder is a tiny mutex-guarded string. The status is written by the background
+// sync goroutine (after every runCycle) and read from the "Status anzeigen" menu callback,
+// which systray dispatches on its own goroutine when the user clicks — two goroutines
+// touching a plain string with no synchronization is a data race (a torn read could
+// surface a garbled status in the toast notification).
+type statusHolder struct {
+	mu sync.RWMutex
+	s  string
+}
+
+func (h *statusHolder) set(v string) { h.mu.Lock(); h.s = v; h.mu.Unlock() }
+func (h *statusHolder) get() string  { h.mu.RLock(); defer h.mu.RUnlock(); return h.s }
 
 func trayMain() {
 	outDir, interval := parseWatchArgs()
@@ -30,7 +44,7 @@ func trayMain() {
 	tray := systray.New()
 	menu := systray.NewMenu()
 
-	lastStatus := "wird geprüft…"
+	status := &statusHolder{s: "wird geprüft…"}
 	syncNow := make(chan struct{}, 1)
 
 	menu.Add("Jetzt synchronisieren", func() {
@@ -40,7 +54,7 @@ func trayMain() {
 		}
 	})
 	menu.Add("Status anzeigen", func() {
-		_ = tray.ShowNotification("Schroedinger Sync", lastStatus)
+		_ = tray.ShowNotification("Schroedinger Sync", status.get())
 	})
 	menu.Add("Logs öffnen", func() {
 		if err := openInExplorer(filepath.Join(outDir, "sync.log")); err != nil {
@@ -68,8 +82,8 @@ func trayMain() {
 	go func() {
 		for {
 			_ = tray.SetTooltip("Schroedinger Sync — synchronisiere…")
-			lastStatus = runCycle(outDir)
-			_ = tray.SetTooltip("Schroedinger Sync — " + lastStatus)
+			status.set(runCycle(outDir))
+			_ = tray.SetTooltip("Schroedinger Sync — " + status.get())
 			select {
 			case <-time.After(interval):
 			case <-syncNow:

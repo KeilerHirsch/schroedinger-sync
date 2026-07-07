@@ -151,7 +151,8 @@ func decryptValue(enc, key []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Chrome v10+ (app-bound) prepends a 32-byte SHA-256(domain) to the plaintext.
+		// Chrome's v20 App-Bound Encryption scheme (not v10 — v10 has no such prefix)
+		// prepends a 32-byte SHA-256(domain) to the plaintext.
 		if len(pt) >= 32 {
 			pt = pt[32:]
 		}

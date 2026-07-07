@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.0.1 (unreleased)
+
+Independent re-audit pass — two fresh review passes (general Go code quality, and a
+security/threat-model review re-deriving its own judgment rather than trusting v2.0.0's
+prior hardening claims) against the already-shipped v2.0.0 code, with all confirmed
+findings fixed. `go build`/`vet`/`test`/`govulncheck`/`gosec`/`staticcheck` all still
+report clean; nothing here was a tool-detectable issue — that's exactly why a second,
+independent read mattered.
+
+**Fixed:**
+
+- **Data race** on the tray's status string (`tray.go`) — written by the background sync
+  goroutine, read from a menu-click callback on a different goroutine, with no
+  synchronization. Now a small mutex-guarded `statusHolder`.
+- **Redaction blind spot:** chromedp's own internal logging defaulted to Go's stdlib
+  `log.Printf` (targets stderr), entirely bypassing this program's stdout redactor while
+  a live session held the injected sessionKey cookie. Wired `chromedp.WithErrorf`/
+  `WithLogf` to route through the same `redact()` every other output path uses.
+- **VBScript injection:** `install-task`'s optional `outDir` argument was spliced
+  unescaped into the generated logon-autostart `.vbs` file; an embedded `"` could break
+  out of the intended quoted argument. Now escaped per VBScript's own quote-doubling
+  convention, with a test case that exercises exactly that input.
+- **Silent multi-org gap:** the harvester always picked the account's first organization
+  with no signal if a second (e.g. a Team workspace) existed. Now logs a warning so "did
+  I get everything?" has an answer.
+- **Non-atomic state writes:** `.sync-state.json` was written directly; now written to a
+  temp file and renamed into place, so a crash or overlapping run can't leave a
+  truncated/corrupt state file.
+- **Byte-unsafe truncation:** `trunc()` sliced strings by byte index, which can split a
+  multi-byte UTF-8 rune in half — reachable in practice via German titles (umlauts, ß)
+  or emoji, producing a corrupted character in a filename. Now rune-safe.
+- Documentation honesty pass on SECURITY.md: several claims read stronger than what the
+  code actually enforces (the exact scope of `TestNetworkEgressIsClaudeOnly`'s literal-
+  only URL matching, the redaction guarantee's stdout-vs-stderr boundary before the
+  chromedp fix above, "one secret" undercounting the broader on-disk temp-copy
+  footprint). Clarified each; added an explicit section on what the regex-based
+  invariant tests do and don't protect against.
+- Minor: an inaccurate code comment (attributed a Chrome cookie-encryption detail to
+  "v10" when it's actually v20 App-Bound Encryption), an imprecise doc comment ("Task-
+  Scheduler" when the actual mechanism is a Startup-folder `.vbs` drop), and an
+  unbounded-growth nit in the redactor's secrets list across long daemon uptimes
+  (deduped on register).
+
 ## v2.0.0
 
 Complete rewrite. Nothing from v1 survives except the name and the goal

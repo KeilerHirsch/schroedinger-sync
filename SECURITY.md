@@ -29,22 +29,40 @@ Every output goes to local disk (`desktop-chats/`) or local MemPalace. There is 
 network client anywhere in this codebase capable of sending data to a third-party
 server — no webhook, no telemetry, no "phone home." Every outbound network call targets
 `claude.ai` and nothing else, enforced by `TestNetworkEgressIsClaudeOnly`, which scans
-the source for every literal request destination and fails the build if one doesn't
-resolve to `claude.ai`.
+the source for every *literal* request destination and fails the build if one doesn't
+resolve to `claude.ai`. (That test's actual boundary: it only catches literal string
+URLs — a request destination built via a variable or string concatenation wouldn't be
+caught. The stronger, structural guarantee is that there is no `net/http` import
+anywhere in this module — see `go.mod` — so there is no general-purpose HTTP client
+to redirect in the first place.)
 
 **4. The sessionKey is never observable in this program's own output.**
 The moment it's decrypted, it's registered with a redactor (`security.go`) that scrubs
 it from stdout (`installStdoutRedactor` — replaces `os.Stdout` with a pipe so *every*
-write, from this code or any future third-party library, is scrubbed before reaching
-the terminal), the daemon's log file, and `probe-report.txt`. Enforced by
-`TestRedactionScrubsRegisteredSecret`.
+write, from this code or any future third-party library targeting stdout, is scrubbed
+before reaching the terminal), from chromedp's own internal logging
+(`chromedp.WithErrorf`/`WithLogf`, wired in `cdp.go`'s `openClaudeSession` — without
+this, chromedp's library defaults to Go's stdlib `log` package, which targets *stderr*
+and would otherwise bypass the stdout redactor entirely while `network.Enable()` is
+processing the injected sessionKey cookie for the whole session), and the daemon's log
+file and `probe-report.txt` (both route through the same `redact()` call). Enforced by
+`TestRedactionScrubsRegisteredSecret` and `TestStdoutRedactorSurvivesSplitWrites`.
+(Scope: this covers every output path this program controls. It does not protect
+against out-of-band forensics of the process's own memory — a debugger or memory dump
+taken by someone who already has code-execution as the same Windows user, who could
+just call `CryptUnprotectData` on `Local State`/`Cookies` directly instead.)
 
 **5. Only the minimum secret is ever decrypted.**
 Earlier versions of this tool decrypted the *entire* claude.ai cookie jar (session key,
 Cloudflare tokens, everything). `readSessionKey()` now decrypts exactly one row — the
 `sessionKey` cookie — because CDP only ever needs that one value; Chrome earns its own
-`cf_clearance` by solving the challenge itself. Smaller blast radius: exactly one secret
-is ever held in process memory.
+`cf_clearance` by solving the challenge itself. Smaller blast radius: exactly one
+*decrypted (plaintext)* secret is ever held in process memory. (Note: `copyCookieDB()`
+does copy the *entire* Cookies SQLite file — every domain, still DPAPI/AES-GCM-encrypted
+at rest — to a temp directory for every session, with best-effort cleanup that isn't
+guaranteed if the process is killed mid-run. That's a broader on-disk footprint than
+"one secret" might suggest by itself, though nothing in that copy is ever decrypted
+except the single sessionKey row.)
 
 **6. It's not published as a reusable library.**
 Everything lives in `package main`, not an importable module (`TestNoImportableCookiePackage`).
@@ -56,6 +74,23 @@ drop-in ingredient.
 `getWithRetry` applies exponential backoff on `rate_limit_error` responses. This exists
 because heavy sessions legitimately hit transient rate limits, but it also means this
 tool cannot be trivially turned into a hammer against Anthropic's infrastructure.
+
+## What "enforced by tests" actually means
+
+`TestHeadlessIsHardcoded` and `TestNetworkEgressIsClaudeOnly` are regex/substring scans
+of the source, not a general-purpose static analyzer. They're regression tripwires —
+built to catch an *accidental* reintroduction of headless mode or a stray non-claude.ai
+network call during ordinary maintenance — not a hard security boundary that would
+survive a deliberately adversarial change. Concretely: splitting an override across two
+lines specifically to dodge `TestHeadlessIsHardcoded`'s same-line proximity check, or
+building a request URL via a variable instead of a literal (invisible to
+`TestNetworkEgressIsClaudeOnly`), would both slip through undetected. For a
+solo-maintained project where the realistic risk is "I changed something and didn't
+notice the consequence," not "a malicious contributor with commit access," that's an
+honest and appropriate scope for what these two tests buy you.
+`TestNoImportableCookiePackage` is the one test in this set that's robust against
+deliberate evasion — dodging it requires literally restructuring the module out of
+`package main`.
 
 ## What this license does *not* do
 

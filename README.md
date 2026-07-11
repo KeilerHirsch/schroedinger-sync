@@ -1,6 +1,7 @@
 # Schroedinger Sync v2
 
 [![CI](https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
 Exports your own claude.ai conversations, project knowledge docs, and memory to local
 Markdown — for feeding into your own local AI memory system (e.g.
@@ -119,5 +120,5 @@ Claude/Anthropic only, for now. See SECURITY.md "Scope" section.
 
 ## License
 
-MIT — free, forever, no paid tier. See [LICENSE](LICENSE) and SECURITY.md's
+AGPLv3 — free and open forever, no paid tier. Strong copyleft: any derivative must stay open-source under the same license. See [LICENSE](LICENSE) and SECURITY.md's
 "Business model" section for why.

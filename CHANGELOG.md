@@ -1,5 +1,42 @@
 # Changelog
 
+## v2.1.0 — AGPLv3 relicense + gold-standard hardening
+
+Relicensed from MIT to **AGPLv3** (still free and open, permanently) so any derivative —
+including a hosted/network version — must stay open source. A full multi-tool + multi-model
+review pass (Go review, security review, gosec, staticcheck, govulncheck, gofmt) with every
+confirmed finding fixed and a unit-test suite that locks the fixes in.
+
+**Security:**
+- Re-pinned the Go toolchain to 1.26.5 to clear **GO-2026-5856** — a reachable Encrypted
+  Client Hello privacy leak in `crypto/tls`.
+- Hardened filename construction: every API-sourced path component (UUID/timestamp), not
+  just the human title, is now stripped to `[0-9A-Za-z-]`, so a tampered claude.ai response
+  could never escape the output directory via `..`.
+
+**Fixed:**
+- `extractText` no longer silently drops unknown conversation content-block types (e.g.
+  extended-thinking or image blocks) — they are now preserved verbatim (was a data-loss bug).
+- Fatal exits now flush the stdout redactor and tear down any open Chrome before exiting, so
+  the last diagnostic line can't be lost to the async pipe and no visible browser is orphaned
+  — including the tray "Beenden" click, which fires on a different goroutine.
+- Added a mutex around all system-tray calls (the tray library has no internal locking),
+  closing a potential Win32 icon-handle use-after-free between the sync goroutine and a menu click.
+- `decryptValue` strips the 32-byte app-bound prefix for **v20** cookies only; a v10 cookie
+  (which has no prefix) can no longer be truncated.
+- `cleanValue` trims NUL padding before whitespace, so a stray trailing space can't survive
+  into the sessionKey.
+- `fetchConvBody` uses a sentinel error + `errors.Is` instead of matching an error string.
+- Write failures are logged with their reason; an unknown subcommand prints usage instead of
+  silently launching the smoke test; `explorer` is opened fire-and-forget.
+
+**Tests:** new unit suite for the pure/parsing logic (truncation, sanitize/path-safety,
+sessionKey cleaning, v10-vs-v20 decryption, Markdown conversion, org resolution incl. the
+Cloudflare-challenge path, sync-state round-trip). Statement coverage 5% → 21%.
+
+**Chore:** AGPL header on every source file; CI pins govulncheck/gosec/staticcheck to fixed
+versions.
+
 ## v2.0.1 (unreleased)
 
 Independent re-audit pass — two fresh review passes (general Go code quality, and a
@@ -90,7 +127,7 @@ same API the web/desktop client uses.
 - The Python CLI and its `curl_cffi` dependency — same reason, superseded by
   the Go/CDP approach above.
 - Freemium pricing plan (free/Pro €5/Team €15) from the original 2026-03
-  business plan. v2 is MIT-licensed and free, permanently — see SECURITY.md
+  business plan. v2 is AGPLv3-licensed and free, permanently — see SECURITY.md
   "Business model" for why.
 
 ## v1.0 (superseded, code removed)

@@ -1,3 +1,13 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // CDP path: drive a REAL Chrome instead of impersonating one.
 //
 // Why: claude.ai sits behind a Cloudflare *managed JS challenge*. tls-client cleared
@@ -107,7 +117,8 @@ func openClaudeSession() (get func(string) (string, error), rawGet func(string) 
 	// while network.Enable() is processing the injected sessionKey cookie all session long.
 	ctx, cancelC := chromedp.NewContext(allocCtx, chromedp.WithErrorf(chromedpLogf), chromedp.WithLogf(chromedpLogf))
 	ctx, cancelT := context.WithTimeout(ctx, 30*time.Minute)
-	teardown = func() { cancelT(); cancelC(); cancelA() }
+	teardown = func() { registerTeardown(nil); cancelT(); cancelC(); cancelA() }
+	registerTeardown(teardown)
 
 	if e := chromedp.Run(ctx,
 		network.Enable(),
@@ -146,6 +157,11 @@ func openClaudeSession() (get func(string) (string, error), rawGet func(string) 
 	return get, rawGet, teardown, nil
 }
 
+// errRateLimited is the sentinel fetchConvBody checks via errors.Is to decide whether to
+// retry with lighter query params. Wrapped (%w) by getWithRetry so a wording change here
+// can never silently break that fallback again.
+var errRateLimited = errors.New("rate-limited")
+
 func getWithRetry(get func(string) (string, error), path string, maxRetry int) (string, error) {
 	delay := 2 * time.Second
 	for i := 0; ; i++ {
@@ -155,7 +171,7 @@ func getWithRetry(get func(string) (string, error), path string, maxRetry int) (
 		}
 		if strings.Contains(body, "rate_limit_error") || strings.Contains(body, "Temporarily unavailable") {
 			if i >= maxRetry {
-				return "", fmt.Errorf("rate-limited after %d retries", maxRetry)
+				return "", fmt.Errorf("%w after %d retries", errRateLimited, maxRetry)
 			}
 			time.Sleep(delay)
 			delay *= 2
@@ -182,7 +198,7 @@ func fetchConvBody(get func(string) (string, error), org, uuid string) (string, 
 			return body, nil
 		}
 		lastErr = err
-		if !strings.Contains(err.Error(), "rate-limited") {
+		if !errors.Is(err, errRateLimited) {
 			return "", err // a non-rate-limit error won't be fixed by lighter params
 		}
 		time.Sleep(3 * time.Second)
@@ -222,11 +238,9 @@ func resolveOrg(get func(string) (string, error)) (string, error) {
 // command the user happened to run.
 func exitOnSessionFailure(err error) {
 	if errors.Is(err, ErrDesktopNotFound) {
-		fmt.Println(ErrDesktopNotFound.Error())
-	} else {
-		fmt.Println("FAIL @session:", err)
+		fatal(ErrDesktopNotFound.Error())
 	}
-	os.Exit(1)
+	fatal("FAIL @session:", err)
 }
 
 // --- smoke ---
@@ -240,12 +254,14 @@ func cdpSmoke() {
 
 	org, err := resolveOrg(get)
 	if err != nil {
-		fmt.Println("FAIL @org:", err)
-		os.Exit(1)
+		fatal("FAIL @org:", err)
 	}
 	fmt.Println("[2] org_id:", org)
 
-	list, _ := getWithRetry(get, "/api/organizations/"+org+"/chat_conversations?limit=3&offset=0", 5)
+	list, lerr := getWithRetry(get, "/api/organizations/"+org+"/chat_conversations?limit=3&offset=0", 5)
+	if lerr != nil {
+		fmt.Println("[3b] list ERR:", lerr)
+	}
 	var convs []convSummary
 	if json.Unmarshal([]byte(list), &convs) != nil {
 		fmt.Println("[3b] parse ERR:", trunc(list, 200))
@@ -272,8 +288,7 @@ func cdpHarvest() {
 
 	org, err := resolveOrg(get)
 	if err != nil {
-		fmt.Println("FAIL @org:", err)
-		os.Exit(1)
+		fatal("FAIL @org:", err)
 	}
 	fmt.Println("[2] org_id:", org)
 
@@ -307,14 +322,13 @@ func cdpHarvest() {
 	// a path-traversal vector (no remote value ever reaches a filesystem path unsanitized
 	// — see sanitize() below).
 	if err := os.MkdirAll(outDir, 0o750); err != nil { // #nosec G703 -- outDir is a local CLI arg, not attacker input
-		fmt.Println("FAIL @mkdir:", err)
-		os.Exit(1)
+		fatal("FAIL @mkdir:", err)
 	}
 
 	// 2) fetch each full conversation -> Markdown (incremental, rate-limit-friendly)
 	newN, skip, errN := 0, 0, 0
 	for i, c := range all {
-		fname := filepath.Join(outDir, fmt.Sprintf("%s_%s_%s.md", trunc(c.CreatedAt, 10), trunc(c.UUID, 8), sanitize(c.Name)))
+		fname := filepath.Join(outDir, fmt.Sprintf("%s_%s_%s.md", pathSafe(trunc(c.CreatedAt, 10)), pathSafe(trunc(c.UUID, 8)), sanitize(c.Name)))
 		if fi, e := os.Stat(fname); e == nil && fi.Size() > 100 { // #nosec G703 -- see above
 			skip++
 			continue
@@ -328,6 +342,7 @@ func cdpHarvest() {
 		md := convToMarkdown(body)
 		if e := os.WriteFile(fname, []byte(md), 0o600); e != nil { // #nosec G703 -- see above
 			errN++
+			fmt.Printf("  [%d/%d] write ERR %.40s: %v\n", i+1, len(all), c.Name, e)
 			continue
 		}
 		newN++
@@ -353,6 +368,14 @@ func cdpHarvest() {
 
 var reBadChars = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)
 var reSpaces = regexp.MustCompile(`\s+`)
+
+// pathSafe strips a path component down to [0-9A-Za-z-] — applied to the API-sourced UUID
+// and timestamp fields that go into filenames (the human title goes through sanitize()).
+// Server values are already clean; this guarantees a ".." or path separator can never reach
+// filepath.Join even if a claude.ai response were ever tampered with (defense in depth).
+var reNotPathSafe = regexp.MustCompile(`[^0-9A-Za-z-]`)
+
+func pathSafe(s string) string { return reNotPathSafe.ReplaceAllString(s, "") }
 
 func sanitize(name string) string {
 	s := reBadChars.ReplaceAllString(name, "")
@@ -400,6 +423,15 @@ func extractText(m message) string {
 			parts = append(parts, fmt.Sprintf("\n```tool: %s\n%s\n```\n", b.Name, string(b.Input)))
 		case "tool_result":
 			parts = append(parts, fmt.Sprintf("\n```result\n%s\n```\n", rawText(b.Content)))
+		default:
+			// Unknown/new block type (extended-thinking, image, or any future Anthropic
+			// type): preserve it verbatim instead of silently dropping it. This is a
+			// faithful archival tool ("no PII filter — full content"), so nothing may vanish.
+			body := rawText(b.Content)
+			if body == "" {
+				body = b.Text
+			}
+			parts = append(parts, fmt.Sprintf("\n```%s\n%s\n```\n", b.Type, body))
 		}
 	}
 	return strings.Join(parts, "\n")

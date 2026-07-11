@@ -104,7 +104,7 @@ machine.
 ## Business model: free, forever
 
 This project's original 2026-03 plan was a freemium SaaS (free tier, paid Pro/Team
-tiers). That plan is retired. Schroedinger Sync v2 is MIT-licensed and free — no paid
+tiers). That plan is retired. Schroedinger Sync v2 is AGPLv3-licensed and free — no paid
 tier, no telemetry, no upsell — permanently. Reasons, briefly:
 
 - **The real addressable audience is a technical niche** (people running Claude Desktop
@@ -114,7 +114,7 @@ tier, no telemetry, no upsell — permanently. Reasons, briefly:
   a stranger for the privilege.** Free + open source lets anyone read exactly what it
   does before trusting it with DPAPI access — that's the actual value exchange here,
   not a price tag.
-- **Charging money changes the liability picture.** Free software under MIT ships
+- **Charging money changes the liability picture.** Free software under the AGPLv3 ships
   "AS IS, WITHOUT WARRANTY" (see LICENSE) — a reasonable basis for a solo-maintained
   security-adjacent tool. A paid product would carry consumer-rights and warranty
   obligations disproportionate to what a hobby project can responsibly support.

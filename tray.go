@@ -1,3 +1,13 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // Tray daemon: hosts a system-tray icon (github.com/gogpu/systray — pure Go, zero CGO,
 // calls Shell_NotifyIconW via golang.org/x/sys/windows, same mechanism main.go already
 // uses for DPAPI — see go.mod for why staying CGO-free matters here) around the same
@@ -36,6 +46,13 @@ type statusHolder struct {
 func (h *statusHolder) set(v string) { h.mu.Lock(); h.s = v; h.mu.Unlock() }
 func (h *statusHolder) get() string  { h.mu.RLock(); defer h.mu.RUnlock(); return h.s }
 
+// trayMu serializes every call INTO the systray object. github.com/gogpu/systray@v0.1.1
+// guards none of its own state, so the background sync goroutine's SetTooltip and a
+// menu-click's ShowNotification/Remove (dispatched on the message-pump goroutine) would
+// otherwise race on shared Win32 handles — up to a use-after-free on the icon handle if
+// SetTooltip runs while "Beenden" destroys it.
+var trayMu sync.Mutex
+
 func trayMain() {
 	outDir, interval := parseWatchArgs()
 	setupFileLog(outDir)
@@ -54,7 +71,9 @@ func trayMain() {
 		}
 	})
 	menu.Add("Status anzeigen", func() {
+		trayMu.Lock()
 		_ = tray.ShowNotification("Schroedinger Sync", status.get())
+		trayMu.Unlock()
 	})
 	menu.Add("Logs öffnen", func() {
 		if err := openInExplorer(filepath.Join(outDir, "sync.log")); err != nil {
@@ -63,7 +82,11 @@ func trayMain() {
 	})
 	menu.AddSeparator()
 	menu.Add("Beenden", func() {
+		trayMu.Lock()
 		tray.Remove()
+		trayMu.Unlock()
+		runActiveTeardown() // tear down any in-flight Chrome the sync goroutine still holds
+		stopRedactor()
 		os.Exit(0)
 	})
 
@@ -81,9 +104,13 @@ func trayMain() {
 
 	go func() {
 		for {
+			trayMu.Lock()
 			_ = tray.SetTooltip("Schroedinger Sync — synchronisiere…")
+			trayMu.Unlock()
 			status.set(runCycle(outDir))
+			trayMu.Lock()
 			_ = tray.SetTooltip("Schroedinger Sync — " + status.get())
+			trayMu.Unlock()
 			select {
 			case <-time.After(interval):
 			case <-syncNow:
@@ -101,7 +128,10 @@ func trayMain() {
 // offers, not a way to run arbitrary commands: the argument is always a path this
 // program itself constructed from outDir + a fixed filename, never free-form input.
 func openInExplorer(path string) error {
-	return exec.Command("explorer", "/select,", path).Run() // #nosec G204 -- path is always outDir+fixed filename, not user/network input
+	// .Start() not .Run(): explorer.exe frequently returns a non-zero exit code even on
+	// success, so .Run() would log a bogus error on nearly every successful click. This
+	// is fire-and-forget — we don't need to wait for or judge explorer's exit status.
+	return exec.Command("explorer", "/select,", path).Start() // #nosec G204 -- path is always outDir+fixed filename, not user/network input
 }
 
 // trayIcon renders a small filled circle with a white ring — a neutral placeholder

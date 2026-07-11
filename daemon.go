@@ -1,3 +1,13 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // M3: live-sync daemon.
 //
 // Watches for claude.ai activity (Cookie-DB writes) and incrementally syncs new
@@ -12,9 +22,9 @@
 // So the daemon must live in the interactive user session; `install-task` registers
 // it to start at logon under the current user.
 //
-//   schroedinger-sync-go watch [outDir] [intervalMinutes]   # run the daemon
-//   schroedinger-sync-go install-task                       # register logon task
-//   schroedinger-sync-go uninstall-task                     # remove it
+//	schroedinger-sync-go watch [outDir] [intervalMinutes]   # run the daemon
+//	schroedinger-sync-go install-task                       # register logon task
+//	schroedinger-sync-go uninstall-task                     # remove it
 package main
 
 import (
@@ -161,7 +171,7 @@ func harvestOnce(outDir string, s *syncState) (newN, changedN, seedN, errN int, 
 
 	for _, c := range all {
 		fname := filepath.Join(outDir, fmt.Sprintf("%s_%s_%s.md",
-			trunc(c.CreatedAt, 10), trunc(c.UUID, 8), sanitize(c.Name)))
+			pathSafe(trunc(c.CreatedAt, 10)), pathSafe(trunc(c.UUID, 8)), sanitize(c.Name)))
 		fileOK := false
 		if fi, e := os.Stat(fname); e == nil && fi.Size() > minFileSizeBytes { // #nosec G703 -- see cdp.go
 			fileOK = true
@@ -188,6 +198,7 @@ func harvestOnce(outDir string, s *syncState) (newN, changedN, seedN, errN int, 
 		}
 		if werr := os.WriteFile(fname, []byte(convToMarkdown(body)), 0o600); werr != nil { // #nosec G703 -- see cdp.go
 			errN++
+			logf("  write ERR %.40s: %v", c.Name, werr)
 			continue
 		}
 		if seen {
@@ -383,8 +394,7 @@ func vbsLauncherContent(exe, outDir string) string {
 func installTask() {
 	exe, err := os.Executable()
 	if err != nil {
-		fmt.Println("FAIL: cannot resolve own path:", err)
-		os.Exit(1)
+		fatal("FAIL: cannot resolve own path:", err)
 	}
 	outDir := ""
 	if len(os.Args) > 2 && os.Args[2] != "" {
@@ -393,8 +403,7 @@ func installTask() {
 	vbs := startupVbsPath()
 	content := vbsLauncherContent(exe, outDir)
 	if err := os.WriteFile(vbs, []byte(content), 0o600); err != nil {
-		fmt.Println("FAIL @write startup launcher:", err)
-		os.Exit(1)
+		fatal("FAIL @write startup launcher:", err)
 	}
 	fmt.Printf("Installed logon autostart (no admin needed):\n  %s\n  -> %s tray (console hidden, tray icon visible)\n", vbs, exe)
 	fmt.Printf("Starts at next logon. Start now with:\n  start \"\" \"%s\" tray\n", exe)

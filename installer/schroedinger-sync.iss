@@ -18,7 +18,7 @@
 ; Output lands in installer\Output\SchroedingerSyncSetup.exe (gitignored).
 
 #define MyAppName "Schroedinger Sync"
-#define MyAppVersion "2.0.1"
+#define MyAppVersion "2.1.0"
 #define MyAppPublisher "KeilerHirsch"
 #define MyAppURL "https://github.com/KeilerHirsch/schroedinger-sync"
 #define MyAppExeName "schroedinger-sync.exe"

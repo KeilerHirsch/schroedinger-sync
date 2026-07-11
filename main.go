@@ -1,3 +1,13 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // Schroedinger Sync v2 — Claude.ai chat/project/memory export engine.
 //
 // Reads YOUR OWN claude.ai sessionKey from Claude Desktop's DPAPI-encrypted cookie
@@ -10,12 +20,11 @@
 // Run it YOURSELF (it reads Cookies/Local State — the credential step stays in YOUR
 // hand, never in an agent's context). The sessionKey is never printed; see security.go.
 //
-//   cd tools/desktop-chat-extractor/schroedinger-go
-//   go build -o schroedinger-sync.exe .
-//   .\schroedinger-sync.exe            # smoke: sessionKey -> org -> 3 titles
-//   .\schroedinger-sync.exe harvest    # full export: chats + project docs + memory
-//   .\schroedinger-sync.exe probe      # surface discovery (schema dump + endpoint scan)
-//   .\schroedinger-sync.exe watch      # live-sync daemon (Desktop-closed gated)
+//	go build -o schroedinger-sync.exe .
+//	.\schroedinger-sync.exe            # smoke: sessionKey -> org -> 3 titles
+//	.\schroedinger-sync.exe harvest    # full export: chats + project docs + memory
+//	.\schroedinger-sync.exe probe      # surface discovery (schema dump + endpoint scan)
+//	.\schroedinger-sync.exe watch      # live-sync daemon (Desktop-closed gated)
 package main
 
 import (
@@ -137,6 +146,7 @@ func loadMasterKey() ([]byte, error) {
 // decryptValue: AES-256-GCM (v10/v20) cookie value, else legacy whole-value DPAPI.
 func decryptValue(enc, key []byte) ([]byte, error) {
 	if len(enc) > 15 && (string(enc[:3]) == "v10" || string(enc[:3]) == "v20") {
+		isV20 := string(enc[:3]) == "v20"
 		nonce := enc[3:15]
 		ct := enc[15:] // ciphertext||tag — Go's GCM Open expects them concatenated
 		block, err := aes.NewCipher(key)
@@ -152,8 +162,9 @@ func decryptValue(enc, key []byte) ([]byte, error) {
 			return nil, err
 		}
 		// Chrome's v20 App-Bound Encryption scheme (not v10 — v10 has no such prefix)
-		// prepends a 32-byte SHA-256(domain) to the plaintext.
-		if len(pt) >= 32 {
+		// prepends a 32-byte SHA-256(domain) to the plaintext; strip it for v20 ONLY,
+		// so a v10 value (which has no prefix) can never be truncated by 32 bytes.
+		if isV20 && len(pt) >= 32 {
 			pt = pt[32:]
 		}
 		return pt, nil
@@ -167,7 +178,7 @@ func cleanValue(pt []byte) string {
 	if i := strings.Index(s, "sk-ant-"); i >= 0 {
 		s = s[i:]
 	}
-	return strings.TrimRight(strings.TrimSpace(s), "\x00")
+	return strings.TrimSpace(strings.TrimRight(s, "\x00"))
 }
 
 // headerSafe: only printable ASCII (no control bytes) — guards against a corrupted or
@@ -191,9 +202,10 @@ func headerSafe(s string) bool {
 // deep "file not found" bubble up raw — see the Apple/defensive-design principle this
 // project adopted 2026-07-02: friction points get a clear message, not a stack of
 // unexplained OS errors.
-//lint:ignore ST1005 this is a complete, user-facing German sentence (never wrapped or
 // chained with other text — checked: readSessionKey/runCycle/exitOnSessionFailure all
 // surface it as-is), and "Claude" is a capitalized proper noun, not a mid-sentence typo.
+//
+//lint:ignore ST1005 this is a complete, user-facing German sentence (never wrapped or
 var ErrDesktopNotFound = errors.New("Claude Desktop wurde nicht gefunden — bitte installieren, einmal öffnen und einloggen: https://claude.ai/download")
 
 // checkClaudeDesktopInstalled is a fast pre-check (no DPAPI decrypt attempted yet) for
@@ -244,7 +256,8 @@ func readSessionKey() (string, error) {
 }
 
 func main() {
-	defer installStdoutRedactor()()
+	stopRedactor = installStdoutRedactor()
+	defer stopRedactor()
 
 	cmd := ""
 	if len(os.Args) > 1 {
@@ -263,7 +276,12 @@ func main() {
 		installTask() // register logon autostart (user session, DPAPI + interactive Chrome)
 	case "uninstall-task":
 		uninstallTask()
+	case "", "smoke":
+		cdpSmoke() // default: auth smoke test (org + first 3 titles)
 	default:
-		cdpSmoke() // auth smoke test (org + first 3 titles)
+		fatal("unknown command:", cmd,
+			"\nvalid: (no arg)|smoke, harvest, probe, watch, tray, install-task, uninstall-task")
 	}
 }
+
+// Observer's note (the cat is out of the box): Gur ZNA, Gur ZLGU, Gur YRTRAQ; XrvyreUvefpu

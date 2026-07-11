@@ -1,7 +1,18 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // Proves the SECURITY.md invariants hold in code, not just in prose:
-//   1. headless is a hardcoded constant, never an overridable flag/env var.
-//   2. every network destination resolves to claude.ai — no exfiltration path exists.
-//   3. a registered secret never survives redact().
+//  1. headless is a hardcoded constant, never an overridable flag/env var.
+//  2. every network destination resolves to claude.ai — no exfiltration path exists.
+//  3. a registered secret never survives redact().
+//
 // Run with: go test ./...
 package main
 
@@ -182,7 +193,7 @@ func TestNetworkEgressIsClaudeOnly(t *testing.T) {
 	// https://claude.ai by the one Navigate() call above. Guard against that invariant
 	// breaking: no fetch(%q call site may be given an absolute-URL-looking literal.
 	fetchRe := regexp.MustCompile(`fetch\(%q`)
-	absPathRe := regexp.MustCompile(`get\w*\(\s*get\s*,\s*"(https?://[^"]+)"`)
+	absPathRe := regexp.MustCompile(`(?:get\w*\(\s*get\s*,\s*|rawGet\(\s*|\bget\(\s*)"(https?://[^"]+)"`)
 	for _, f := range goSourceFiles(t) {
 		b, err := os.ReadFile(f)
 		if err != nil {

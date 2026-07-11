@@ -1,9 +1,20 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // Non-chat surfaces: project knowledge docs + the claude.ai memory blob.
 //
 // The probe established (2026-07-02) that claude.ai exposes, beyond chat_conversations:
 //   - /api/organizations/{org}/projects            -> [{uuid,name,description,...}]
 //   - /api/organizations/{org}/projects/{id}/docs  -> [{uuid,file_name,content,...}]
 //   - /api/organizations/{org}/memory              -> {"memory":"<markdown>"}
+//
 // There is NO separate Cowork/Code/Design store — platform is only CLAUDE_AI/VOICE, and
 // project chats already arrive via chat_conversations (project_uuid tag). So harvesting
 // chats + project docs + memory captures everything reachable.
@@ -67,16 +78,17 @@ func harvestProjects(get func(string) (string, error), org, outDir string) (docN
 		fmt.Printf("    [%s] %d doc(s)\n", trunc(p.Name, 40), len(docs))
 		for _, d := range docs {
 			fname := filepath.Join(outDir, fmt.Sprintf("project_%s_%s_%s",
-				trunc(p.UUID, 8), trunc(d.UUID, 8), sanitize(strings.TrimSuffix(d.FileName, ".md"))))
+				pathSafe(trunc(p.UUID, 8)), pathSafe(trunc(d.UUID, 8)), sanitize(strings.TrimSuffix(d.FileName, ".md"))))
 			if !strings.HasSuffix(strings.ToLower(fname), ".md") {
 				fname += ".md"
 			}
 			md := fmt.Sprintf("# %s\n\n- Project: %s (%s)\n- Doc UUID: %s\n- Created: %s\n\n---\n\n%s\n",
 				d.FileName, p.Name, p.UUID, d.UUID, trunc(d.CreatedAt, 19), d.Content)
-			if os.WriteFile(fname, []byte(md), 0o600) == nil { // #nosec G703 -- outDir is a local CLI arg, see cdp.go
+			if werr := os.WriteFile(fname, []byte(md), 0o600); werr == nil { // #nosec G703 -- outDir is a local CLI arg, see cdp.go
 				docN++
 			} else {
 				errN++
+				fmt.Printf("    [%s] write ERR %.30s: %v\n", trunc(p.Name, 30), d.FileName, werr)
 			}
 			time.Sleep(150 * time.Millisecond)
 		}

@@ -1,3 +1,13 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // Security hardening: secret redaction + a static self-check that the code's own
 // invariants (no headless override, no non-claude.ai network egress) still hold.
 // See SECURITY.md for the full threat model this enforces.
@@ -106,4 +116,47 @@ func installStdoutRedactor() func() {
 		<-done
 		os.Stdout = real
 	}
+}
+
+// stopRedactor drains and restores stdout. main() sets it to installStdoutRedactor()'s
+// teardown so any fatal path can flush the async redaction pipe BEFORE os.Exit — os.Exit
+// does not wait for goroutines, so without this the final diagnostic line printed on a
+// failing run can be lost with the still-buffered pipe. Default no-op until main sets it.
+var stopRedactor = func() {}
+
+// activeTeardown holds the chromedp teardown for the currently-open Claude session, so a
+// fatal exit — or the tray "Beenden" click, which fires on a *different* goroutine than the
+// harvest that owns the open Chrome — can run it and not orphan the visible browser.
+// openClaudeSession registers it; its own teardown clears it. Mutex-guarded because the
+// tray daemon sets/reads it from two goroutines.
+var (
+	teardownMu     sync.Mutex
+	activeTeardown func()
+)
+
+func registerTeardown(f func()) {
+	teardownMu.Lock()
+	activeTeardown = f
+	teardownMu.Unlock()
+}
+
+func runActiveTeardown() {
+	teardownMu.Lock()
+	f := activeTeardown
+	activeTeardown = nil
+	teardownMu.Unlock()
+	if f != nil {
+		f()
+	}
+}
+
+// fatal prints a message, tears down any open Chrome session, flushes the stdout redactor,
+// then exits non-zero. Every fatal path routes through here so no os.Exit can (a) orphan a
+// visible Chrome by skipping a deferred teardown, or (b) lose its final diagnostic line to
+// the still-draining redaction pipe.
+func fatal(a ...any) {
+	fmt.Println(a...)
+	runActiveTeardown()
+	stopRedactor()
+	os.Exit(1)
 }

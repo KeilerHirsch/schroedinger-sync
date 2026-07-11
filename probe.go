@@ -1,3 +1,13 @@
+// Schroedinger Sync -- export your own claude.ai data to local Markdown.
+// Copyright (C) 2026 KeilerHirsch
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; without even the implied
+// warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+// Affero General Public License <https://www.gnu.org/licenses/> for more details.
+
 // Surface probe: empirically answer "does the harvest cover EVERYTHING on claude.ai,
 // or only regular chats?".
 //
@@ -10,7 +20,7 @@
 // endpoints, writing a plaintext report (probe-report.txt). No secrets are printed; the
 // sessionKey is never emitted. Run it with Claude Desktop CLOSED (DPAPI cookie lock).
 //
-//   schroedinger-sync.exe probe
+//	schroedinger-sync.exe probe
 package main
 
 import (
@@ -31,8 +41,7 @@ func cdpProbe() {
 
 	org, err := resolveOrg(get)
 	if err != nil {
-		fmt.Println("FAIL @org:", err)
-		os.Exit(1)
+		fatal("FAIL @org:", err)
 	}
 
 	var out strings.Builder

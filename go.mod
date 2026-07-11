@@ -4,9 +4,11 @@ go 1.26
 
 // Pinned via govulncheck (2026-07-02): go1.26.1 carries 7 stdlib CVEs reachable from
 // this codebase (net/textproto, crypto/x509 x4, net, crypto/tls — see SECURITY.md).
+// Re-pinned 2026-07-11: go1.26.4 crypto/tls is reachable-affected by GO-2026-5856
+// (Encrypted Client Hello privacy leak), fixed in go1.26.5.
 // All are fixed upstream with no source change needed; GOTOOLCHAIN=auto downloads this
 // automatically on build/test.
-toolchain go1.26.4
+toolchain go1.26.5
 
 // Run `go mod tidy` to resolve these from the imports:
 //   github.com/billgraziano/dpapi   (Windows DPAPI)

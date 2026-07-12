@@ -364,7 +364,7 @@ func cdpHarvest() {
 	}
 }
 
-// --- Markdown conversion (no PII filter — Michael's data, full content) ---
+// --- Markdown conversion (no PII filter — it's your own account's data, full content) ---
 
 var reBadChars = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)
 var reSpaces = regexp.MustCompile(`\s+`)

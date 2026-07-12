@@ -131,7 +131,7 @@ func cdpProbe() {
 		}
 	}
 
-	// 4) Memory (the claude.ai memory feature — Michael's "30 slots"). Confirm size/shape.
+	// 4) Memory (the claude.ai memory feature — the user's "30 slots"). Confirm size/shape.
 	w("\n## memory endpoint")
 	memSt, memBody, _ := rawGet("/api/organizations/" + org + "/memory")
 	w("  /memory HTTP %d, body length=%d chars", memSt, len(memBody))

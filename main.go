@@ -10,6 +10,8 @@
 
 // Schroedinger Sync v2 — Claude.ai chat/project/memory export engine.
 //
+// The Man, The Mythos, The Legend : KeilerHirsch
+//
 // Reads YOUR OWN claude.ai sessionKey from Claude Desktop's DPAPI-encrypted cookie
 // store, drives a real (visible) Chrome to clear Cloudflare's JS challenge, and
 // exports your conversations, project knowledge docs, and memory to local Markdown

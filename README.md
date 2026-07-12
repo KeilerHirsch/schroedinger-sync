@@ -3,6 +3,9 @@
 [![CI](https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
+> [!IMPORTANT]
+> Find this useful? You can support development on **[Ko-fi](https://ko-fi.com/keilerhirsch)** ☕ — please mention *Schroedinger Sync* so I know what to keep building.
+
 Exports your own claude.ai conversations, project knowledge docs, and memory to local
 Markdown — for feeding into your own local AI memory system (e.g.
 [MemPalace](https://github.com/MemPalace/mempalace)). Windows-only, single Go binary.

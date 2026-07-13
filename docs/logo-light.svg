@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 72" width="300" height="72" role="img" aria-label="Schrödinger-Sync">
+  <defs>
+    <linearGradient id="cold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2bb6c4"/>
+      <stop offset="1" stop-color="#6a58e8"/>
+    </linearGradient>
+  </defs>
+  <!-- the box: solid captured frame over a dashed 'would-have-vanished' frame -->
+  <rect x="14" y="12" width="48" height="48" rx="11" fill="none" stroke="url(#cold)" stroke-width="3.4"/>
+  <rect x="14" y="12" width="48" height="48" rx="11" fill="none" stroke="#d98a1f" stroke-width="3.4" stroke-dasharray="3 9" opacity="0.95"/>
+  <!-- the state -->
+  <text x="38" y="50" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-size="34" fill="#1b1733">ψ</text>
+  <!-- wordmark -->
+  <text x="80" y="33" font-family="ui-monospace, 'Cascadia Code', Consolas, monospace" font-size="15" letter-spacing="3.5" fill="#1b1733" opacity="0.6">SCHRÖDINGER</text>
+  <text x="80" y="59" font-family="ui-monospace, 'Cascadia Code', Consolas, monospace" font-size="26" font-weight="700" letter-spacing="1" fill="#1b1733">SYNC</text>
+</svg>

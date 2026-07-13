@@ -1,10 +1,19 @@
-# Schroedinger Sync v2
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img alt="Schrödinger-Sync" src="docs/logo-light.svg" width="440">
+  </picture>
+</div>
 
-[![CI](https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
+<p align="center"><em>Your Claude conversations live in superposition — capture them to local Markdown before the session collapses.</em></p>
+
+<p align="center">
+  <a href="https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml"><img src="https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
+</p>
 
 > [!IMPORTANT]
-> Find this useful? You can support development on **[Ko-fi](https://ko-fi.com/keilerhirsch)** ☕ — please mention *Schroedinger Sync* so I know what to keep building.
+> Find this useful? You can support development on **[Ko-fi](https://ko-fi.com/keilerhirsch)** ☕ — please mention *Schrödinger-Sync* so I know what to keep building.
 
 Exports your own claude.ai conversations, project knowledge docs, and memory to local
 Markdown — for feeding into your own local AI memory system (e.g.
@@ -30,6 +39,10 @@ live inside the same `chat_conversations` API, distinguished only by a `platform
 (`CLAUDE_AI` / `VOICE`). One harvest command covers all of it.
 
 ## How it works (short version)
+
+<div align="center">
+  <img alt="Schrödinger-Sync data flow: volatile Claude account state, observed by the tool, written to local Markdown" src="docs/how-it-works.svg" width="840">
+</div>
 
 1. Decrypts your own `sessionKey` cookie from Claude Desktop's local, DPAPI-encrypted
    cookie store (`readSessionKey()` in `main.go`) — requires Desktop to be **closed**
@@ -130,7 +143,7 @@ Claude/Anthropic only, for now. See SECURITY.md "Scope" section.
   read it, modify it, self-host it at no cost. The individual tool will always have a
   free, open edition.
 - **Commercial — [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md):** organisations that
-  want to embed or redistribute Schroedinger Sync inside a **closed-source or SaaS
+  want to embed or redistribute Schrödinger-Sync inside a **closed-source or SaaS
   product** — without taking on the AGPL's obligation to release their own source —
   can obtain a separate commercial licence.
 

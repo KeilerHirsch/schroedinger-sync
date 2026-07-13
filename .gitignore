@@ -12,3 +12,13 @@ installer/Output/
 probe-report.txt
 sync.log
 .sync-state.json
+
+# --- Secrets / PII (NEVER commit) ---
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+*.pfx
+Local State
+Cookies

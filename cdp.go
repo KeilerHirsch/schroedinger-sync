@@ -174,6 +174,18 @@ func isRateLimited(body string) bool {
 	return strings.Contains(body, "rate_limit_error") || strings.Contains(body, "Temporarily unavailable")
 }
 
+// looksLikeChallenge reports whether a 200-OK body is an HTML page (a Cloudflare "Just a
+// moment" interstitial, a login/redirect, or a WAF block) rather than the expected API
+// JSON. Valid claude.ai API responses are always JSON — they start with '{' or '[' — so a
+// body that begins with '<' after trimming is never a real conversation/list/doc and must
+// never be persisted as content. Checked by PREFIX only, deliberately NOT a "Just a moment"
+// substring: a user's own conversation could legitimately contain that phrase, but an HTML
+// page can never start with '{'. This is the guard that stops a mid-session challenge from
+// being frozen in as a conversation (see convToMarkdown + the getWithRetryDelay call site).
+func looksLikeChallenge(body string) bool {
+	return strings.HasPrefix(strings.TrimSpace(body), "<")
+}
+
 func getWithRetry(get func(string) (string, error), path string, maxRetry int) (string, error) {
 	return getWithRetryDelay(get, path, maxRetry, 2*time.Second)
 }
@@ -195,6 +207,11 @@ func getWithRetryDelay(get func(string) (string, error), path string, maxRetry i
 			time.Sleep(delay)
 			delay *= 2
 			continue
+		}
+		if looksLikeChallenge(body) {
+			// A 200-OK HTML page (challenge/login/WAF) is not a retryable rate-limit and not
+			// valid content — fail hard so no caller writes it to disk or parses it as JSON.
+			return "", fmt.Errorf("got an HTML challenge/error page instead of JSON for %s (session may have lost Cloudflare clearance)", path)
 		}
 		return body, nil
 	}
@@ -338,6 +355,22 @@ func convFilename(outDir string, c convSummary) string {
 		pathSafe(trunc(c.CreatedAt, 10)), pathSafe(trunc(c.UUID, 8)), sanitize(c.Name)))
 }
 
+// fileIsCurrent reports whether the on-disk export at fname already reflects the
+// conversation's CURRENT server version: it exists, is non-trivial, and its recorded
+// "- Updated:" header equals the server updated_at (truncated the same way convToMarkdown
+// writes it). Used by the one-shot harvest (cdpHarvest) so it applies the SAME freshness rule
+// the daemon's convAction already enforces (header == trunc(updated_at,19)) instead of the
+// old size-only skip that never re-fetched a server-side change. The rule is intentionally
+// identical to convAction's; convAction stays a pure function (its caller feeds it the
+// already-computed header) so it can be unit-tested without touching the filesystem.
+func fileIsCurrent(fname string, c convSummary) bool {
+	fi, err := os.Stat(fname) // #nosec G304 G703 -- fname is outDir + sanitised filename, see convFilename/sanitize
+	if err != nil || fi.Size() <= minFileSizeBytes {
+		return false
+	}
+	return fileConvUpdatedAt(fname) == trunc(c.UpdatedAt, 19)
+}
+
 // --- harvest (M2) ---
 
 func cdpHarvest() {
@@ -380,17 +413,28 @@ func cdpHarvest() {
 	newN, skip, errN := 0, 0, 0
 	for i, c := range all {
 		fname := convFilename(outDir, c)
-		if fi, e := os.Stat(fname); e == nil && fi.Size() > 100 { // #nosec G703 -- see above
+		if fileIsCurrent(fname, c) { // on-disk header matches server -> already current (was: size-only, which never refreshed a changed conversation)
 			skip++
 			continue
 		}
 		body, err := fetchConvBody(get, org, c.UUID)
 		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				// The whole session timed out mid-harvest: every remaining fetch will fail too.
+				// Abort with a clear INCOMPLETE message instead of counting the tail as per-item
+				// errors and printing a "DONE" that looks like a full export.
+				fatal(fmt.Sprintf("session deadline exceeded mid-harvest at %d/%d — harvest INCOMPLETE, re-run to finish", i+1, len(all)))
+			}
 			errN++
 			fmt.Printf("  [%d/%d] ERR %.40s: %v\n", i+1, len(all), c.Name, err)
 			continue
 		}
 		md := convToMarkdown(body)
+		if md == "" { // non-JSON, non-conversation response (e.g. an HTML error page) — never persist it
+			errN++
+			fmt.Printf("  [%d/%d] SKIP %.40s: unexpected non-conversation response, not written\n", i+1, len(all), c.Name)
+			continue
+		}
 		if e := os.WriteFile(fname, []byte(md), 0o600); e != nil { // #nosec G703 -- see above
 			errN++
 			fmt.Printf("  [%d/%d] write ERR %.40s: %v\n", i+1, len(all), c.Name, e)
@@ -408,10 +452,21 @@ func cdpHarvest() {
 	fmt.Printf("DONE (projects): %d docs, %d errors\n", pDocs, pErr)
 
 	fmt.Println("\n== memory ==")
-	if e := harvestMemory(get, org, outDir); e != nil {
-		fmt.Println("DONE (memory): ERR:", e)
-	} else {
+	memWrote, memErr := harvestMemory(get, org, outDir)
+	switch {
+	case memErr != nil:
+		fmt.Println("DONE (memory): ERR:", memErr)
+	case memWrote:
 		fmt.Println("DONE (memory): claude-ai-memory.md written")
+	default:
+		fmt.Println("DONE (memory): empty — nothing to write")
+	}
+
+	// Non-zero exit on ANY per-item failure, so a wrapping script can tell a clean run from
+	// one that under-exported (was: always exit 0). fatal() also tears down Chrome and flushes
+	// the redactor before exiting.
+	if errN > 0 || pErr > 0 || memErr != nil {
+		fatal(fmt.Sprintf("⚠ harvest completed WITH ERRORS: %d chat, %d project-doc, memory=%v — re-run to retry the failed items", errN, pErr, memErr))
 	}
 }
 
@@ -491,10 +546,29 @@ func extractText(m message) string {
 func convToMarkdown(raw string) string {
 	var c fullConv
 	if json.Unmarshal([]byte(raw), &c) != nil {
-		return raw // fallback: keep raw JSON rather than lose data
+		// Keep the raw body ONLY if it's plausibly JSON we merely failed to map (defense in
+		// depth: never freeze an HTML challenge/error page in as "conversation content" — the
+		// getWithRetryDelay guard should already have rejected it upstream). Empty return
+		// signals "nothing to write", and the callers skip the write on "".
+		if strings.HasPrefix(strings.TrimSpace(raw), "{") {
+			return raw
+		}
+		return ""
 	}
-	title := c.Name
-	if title == "" {
+	// A body that unmarshals cleanly but carries none of a conversation's server-set fields
+	// (created_at/updated_at) and no messages is NOT a conversation — it's a JSON API error
+	// body (e.g. a 404 {"type":"error",...} for a since-deleted conversation, which get()
+	// returns verbatim regardless of HTTP status, unmarshalling into an all-empty struct).
+	// Returning "" stops it OVERWRITING a good existing export with a "# Untitled" stub.
+	if c.CreatedAt == "" && c.UpdatedAt == "" && len(c.ChatMessages) == 0 {
+		return ""
+	}
+	// Keep the title on ONE line: both harvest paths read the file's "- Updated:" header to
+	// decide freshness, and an embedded newline in a title could inject a second "- Updated:"
+	// line that the freshness regex would match first (own-account data, but it could cause a
+	// wrong skip). A newline can't legitimately appear in a chat title.
+	title := strings.ReplaceAll(strings.ReplaceAll(c.Name, "\r", " "), "\n", " ")
+	if strings.TrimSpace(title) == "" {
 		title = "Untitled"
 	}
 	var b strings.Builder

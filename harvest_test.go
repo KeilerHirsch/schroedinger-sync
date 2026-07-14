@@ -48,7 +48,7 @@ func TestGetWithRetryReturnsBodyWhenOK(t *testing.T) {
 func TestHarvestMemory(t *testing.T) {
 	dir := t.TempDir()
 	get := func(string) (string, error) { return `{"memory":"# my memory blob"}`, nil }
-	if err := harvestMemory(get, "ORG", dir); err != nil {
+	if _, err := harvestMemory(get, "ORG", dir); err != nil {
 		t.Fatalf("harvestMemory: %v", err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "claude-ai-memory.md"))
@@ -58,8 +58,9 @@ func TestHarvestMemory(t *testing.T) {
 	if !strings.Contains(string(b), "my memory blob") {
 		t.Errorf("memory content missing: %s", b)
 	}
-	// An empty memory blob must be reported, not written as a valid-but-empty file.
-	if err := harvestMemory(func(string) (string, error) { return `{"memory":""}`, nil }, "ORG", dir); err == nil {
-		t.Error("empty memory should error")
+	// An empty memory blob is a legitimate account state -> a no-op (nil), not an error
+	// (M4 fix; TestHarvestMemoryEmptyIsNoop asserts it also writes nothing).
+	if _, err := harvestMemory(func(string) (string, error) { return `{"memory":""}`, nil }, "ORG", dir); err != nil {
+		t.Errorf("empty memory must be a no-op, got err %v", err)
 	}
 }

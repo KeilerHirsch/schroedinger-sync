@@ -96,23 +96,32 @@ func harvestProjects(get func(string) (string, error), org, outDir string) (docN
 	return docN, errN
 }
 
-// harvestMemory writes the claude.ai memory blob to a single Markdown file.
-func harvestMemory(get func(string) (string, error), org, outDir string) error {
-	body, err := getWithRetry(get, "/api/organizations/"+org+"/memory", 5)
-	if err != nil {
-		return err
+// harvestMemory writes the claude.ai memory blob to a single Markdown file. Returns
+// wrote=true only when a file was actually written, so a caller can report "written" honestly
+// (an empty memory blob is a legitimate no-op, not a write and not an error).
+func harvestMemory(get func(string) (string, error), org, outDir string) (wrote bool, err error) {
+	body, gerr := getWithRetry(get, "/api/organizations/"+org+"/memory", 5)
+	if gerr != nil {
+		return false, gerr
 	}
 	var m struct {
 		Memory string `json:"memory"`
 	}
 	if json.Unmarshal([]byte(body), &m) != nil {
-		return fmt.Errorf("parse memory: %s", trunc(body, 200))
+		return false, fmt.Errorf("parse memory: %s", trunc(body, 200))
 	}
 	if strings.TrimSpace(m.Memory) == "" {
-		return fmt.Errorf("memory empty (body: %s)", trunc(body, 160))
+		// An empty memory blob is a legitimate account state (new/unused memory), not a
+		// failure. Returning an error here made refreshSurfaces fail every cycle forever for
+		// such accounts (LastSurfaces never set). Treat it as nothing-to-write.
+		logf("  memory is empty — nothing to write (not an error)")
+		return false, nil
 	}
 	fname := filepath.Join(outDir, "claude-ai-memory.md")
 	md := fmt.Sprintf("# claude.ai Memory (org %s)\n\n- Harvested: %s\n\n---\n\n%s\n",
 		org, time.Now().Format(time.RFC3339), m.Memory)
-	return os.WriteFile(fname, []byte(md), 0o600) // #nosec G703 -- outDir is a local CLI arg, see cdp.go
+	if werr := os.WriteFile(fname, []byte(md), 0o600); werr != nil { // #nosec G703 -- outDir is a local CLI arg, see cdp.go
+		return false, werr
+	}
+	return true, nil
 }

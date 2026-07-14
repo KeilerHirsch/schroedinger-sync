@@ -28,8 +28,18 @@ import (
 
 func TestConvActionSkipsWhenCurrent(t *testing.T) {
 	c := convSummary{UUID: "u1", UpdatedAt: "2026-07-14T10:00:00.000000Z"}
-	if got := convAction(c, c.UpdatedAt, true, true, ""); got != actionSkip {
-		t.Errorf("seen+known==updated+fileOK should skip, got %v", got)
+	if got := convAction(c, c.UpdatedAt, true, true, trunc(c.UpdatedAt, 19)); got != actionSkip {
+		t.Errorf("seen+known==updated+fileOK+header-match should skip, got %v", got)
+	}
+}
+
+// TestConvActionRefetchesSeenPoisonedFile guards F2: a file recorded in state whose on-disk
+// header does NOT match the server (e.g. a raw HTML/error page a pre-fix build wrote and then
+// recorded) must re-fetch to heal, not be skipped forever on size alone.
+func TestConvActionRefetchesSeenPoisonedFile(t *testing.T) {
+	c := convSummary{UUID: "u1", UpdatedAt: "2026-07-14T10:00:00.000000Z"}
+	if got := convAction(c, c.UpdatedAt, true, true, ""); got != actionFetch {
+		t.Errorf("seen file with a missing/mismatched header must re-fetch (heal), got %v", got)
 	}
 }
 

@@ -1,5 +1,47 @@
 # Changelog
 
+## v2.1.2 — sync-engine hardening round 2 (harvest data integrity)
+
+A second correctness pass on the harvest/sync engine, driven by a full byte-level teardown
+plus an independent adversarial review. The security surface is unchanged (gosec, staticcheck
+and govulncheck still clean); every fix is in the harvest/robustness path. Tests-first;
+statement coverage 27.2% → 27.9%.
+
+**Fixed:**
+- **A Cloudflare/login/WAF HTML page could be saved as a conversation — permanently.** A
+  challenge triggered mid-harvest returns HTTP 200 with an HTML body; it was neither a fetch
+  error nor a rate-limit, so it was written verbatim as the conversation's Markdown and then
+  locked in (state recorded it as current, and thereafter both the daemon and the one-shot
+  harvest skipped it forever). Non-JSON bodies (anything starting with `<`) are now rejected
+  before being treated as content or written, and `convToMarkdown` refuses to persist a
+  non-JSON body.
+- **Failed conversations now retry on the next cycle.** The daemon advanced its cookie-DB
+  activity watermark even when some conversations had failed, so those failures waited until
+  the user next opened/closed Claude Desktop (possibly days). A partial cycle now keeps the
+  previous watermark so the next interval retries the failed items — bounded, so a
+  permanently-failing item can't make the daemon re-list and pop Chrome every interval forever.
+- **The one-shot `harvest` now refreshes changed conversations.** It skipped any existing
+  file by size alone and so never re-exported a conversation that had changed server-side; it
+  now compares the file's recorded `updated_at` header against the server, matching the
+  daemon's freshness check (shared `fileIsCurrent`).
+- **A partial project-docs refresh is no longer reported as a completed 24 h refresh** — it
+  returns an error so the next cycle retries instead of swallowing the failures.
+- **Empty claude.ai memory is a no-op**, not an error that re-tried the surfaces refresh
+  every cycle forever.
+- **A mid-harvest session-timeout is now a hard error**, not a "successful" partial export.
+
+**Internal:**
+- `saveState` writes to a unique temp file (was a fixed `.tmp`, which two instances sharing an
+  output dir could race on). `fileConvUpdatedAt` reads a full bounded prefix (`io.ReadFull`)
+  so a short read can't drop the header. The one-shot `harvest` now exits non-zero when any
+  item failed. An invalid `watch` interval argument is logged instead of silently ignored.
+- New regression tests: HTML/challenge rejection, the partial-cycle cookie watermark, the
+  shared on-disk freshness check, and empty-memory-as-no-op.
+
+**Still open (deliberately deferred):** a single-instance guard (a lockfile / named mutex so
+two daemons can't share one output dir) — it needs its own careful, tested design and is
+tracked for a follow-up.
+
 ## v2.1.1 — sync-engine correctness hardening
 
 A focused correctness pass on the live-sync engine after a full multi-agent ECC review (Go

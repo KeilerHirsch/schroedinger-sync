@@ -28,6 +28,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,8 +53,9 @@ const (
 type syncState struct {
 	Conversations map[string]string `json:"conversations"` // uuid -> updated_at
 	LastSync      string            `json:"last_sync"`
-	LastCookieMod string            `json:"last_cookie_mod"` // Cookie-DB mtime we last acted on
-	LastSurfaces  string            `json:"last_surfaces"`   // last time project docs + memory were refreshed
+	LastCookieMod string            `json:"last_cookie_mod"`        // Cookie-DB mtime we last acted on
+	LastSurfaces  string            `json:"last_surfaces"`          // last time project docs + memory were refreshed
+	RetryCycles   int               `json:"retry_cycles,omitempty"` // consecutive no-progress error cycles; caps the retry storm (see cookieWatermark)
 }
 
 const surfacesRefreshEvery = 24 * time.Hour
@@ -84,11 +86,29 @@ func saveState(outDir string, s *syncState) error {
 	if err != nil {
 		return err
 	}
-	tmp := statePath(outDir) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	// Unique temp name (not a fixed ".tmp"): if two daemon instances ever share an outDir
+	// (Startup-folder tray + a manual `watch`), a fixed temp name means both write and rename
+	// THE SAME file, racing each other — one rename can then fail because the other already
+	// moved it. A per-write temp keeps the atomic-rename invariant intact regardless.
+	f, err := os.CreateTemp(outDir, ".sync-state-*.tmp") // #nosec G304 -- outDir is a local CLI arg, see cdp.go
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, statePath(outDir))
+	tmp := f.Name()
+	if _, werr := f.Write(b); werr != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return werr
+	}
+	if cerr := f.Close(); cerr != nil {
+		_ = os.Remove(tmp)
+		return cerr
+	}
+	if err := os.Rename(tmp, statePath(outDir)); err != nil {
+		_ = os.Remove(tmp) // don't leave the temp behind if the rename fails (e.g. the state file is locked by another process / AV)
+		return err
+	}
+	return nil
 }
 
 // logSink is where logf writes. Default stdout; the daemon redirects it to a MultiWriter
@@ -150,7 +170,7 @@ func fileConvUpdatedAt(path string) string {
 	// Close error on a read-only file we're done with carries nothing actionable.
 	defer func() { _ = f.Close() }()
 	buf := make([]byte, 512)
-	n, _ := f.Read(buf) // a short read still contains the header (it's ~line 4)
+	n, _ := io.ReadFull(f, buf) // ReadFull fills buf unless the file is shorter (ErrUnexpectedEOF); either way buf[:n] holds the full bounded prefix, so a single short Read can't drop the header
 	m := reUpdatedHeader.FindSubmatch(buf[:n])
 	if m == nil {
 		return ""
@@ -179,13 +199,42 @@ const (
 // to actually match the server version; otherwise we fetch.
 func convAction(c convSummary, known string, seen, fileOK bool, fileUpdated string) convActionKind {
 	switch {
-	case seen && known == c.UpdatedAt && fileOK:
+	case seen && known == c.UpdatedAt && fileOK && fileUpdated == trunc(c.UpdatedAt, 19):
+		// Skip only when the ON-DISK header also matches the server (not just "seen + size").
+		// Requiring the header heals files poisoned by a pre-fix build that wrote a raw
+		// HTML/error page AND recorded state: such a file's header won't match, so it
+		// re-fetches instead of being skipped forever.
 		return actionSkip
 	case !seen && fileOK && fileUpdated == trunc(c.UpdatedAt, 19):
 		return actionSeed
 	default:
 		return actionFetch
 	}
+}
+
+// maxRetryCycles caps how many consecutive no-progress error cycles hold the Cookie-DB
+// watermark before it advances anyway — see cookieWatermark.
+const maxRetryCycles = 3
+
+// cookieWatermark decides, after a cycle, BOTH the Cookie-DB watermark to persist and the
+// updated consecutive-stall counter. A clean cycle (errN==0) advances the watermark and
+// resets the counter. A partial cycle that still made progress holds the watermark (so the
+// failed items retry next interval) and resets the counter — we're not stuck. A partial cycle
+// with NO progress holds and counts the stall, but only up to maxRetryCycles: after that it
+// advances anyway, so one permanently-failing item (e.g. a huge conversation that always
+// rate-limits) can't wedge the daemon into re-listing and popping Chrome every interval
+// forever with zero Desktop activity.
+func cookieWatermark(cur, prev string, madeProgress bool, errN, retries int) (mod string, nextRetries int) {
+	if errN == 0 {
+		return cur, 0
+	}
+	if madeProgress {
+		return prev, 0
+	}
+	if retries+1 >= maxRetryCycles {
+		return cur, 0
+	}
+	return prev, retries + 1
 }
 
 // harvestOnce opens a Cloudflare-cleared session, lists all conversations, and
@@ -240,19 +289,37 @@ func harvestOnce(outDir string, s *syncState) (newN, changedN, seedN, errN int, 
 		// first daemon cycle -> (re)fetch.
 		body, ferr := fetchConvBody(get, org, c.UUID)
 		if ferr != nil {
+			if errors.Is(ferr, context.DeadlineExceeded) {
+				// The whole session timed out mid-harvest: every remaining fetch will fail too.
+				// Return a hard error so runCycle reports failure and (via cookieWatermark) does
+				// NOT advance the watermark — otherwise the un-fetched tail would be silently
+				// reported as a successful cycle and wait for the next activity trigger.
+				return newN, changedN, seedN, errN, fmt.Errorf("session deadline exceeded mid-harvest: %w", ferr)
+			}
 			errN++
 			logf("  ERR %.40s: %v", c.Name, ferr)
 			continue
 		}
-		if werr := os.WriteFile(fname, []byte(convToMarkdown(body)), 0o600); werr != nil { // #nosec G703 -- see cdp.go
+		md := convToMarkdown(body)
+		if md == "" { // non-conversation response (e.g. HTML) — never persist
+			errN++
+			logf("  SKIP %.40s: unexpected non-conversation response, not written", c.Name)
+			continue
+		}
+		if werr := os.WriteFile(fname, []byte(md), 0o600); werr != nil { // #nosec G703 -- see cdp.go
 			errN++
 			logf("  write ERR %.40s: %v", c.Name, werr)
 			continue
 		}
-		if seen {
-			changedN++
-		} else {
+		// Count as progress only when the state actually moved — a new conversation or a
+		// genuine server-side change. Re-writing an UNCHANGED conversation merely to heal a
+		// small/headerless on-disk file is NOT progress; counting it would let a perpetually-
+		// rewritten file reset the retry-stall counter and defeat cookieWatermark's cap (F3).
+		switch {
+		case !seen:
 			newN++
+		case known != c.UpdatedAt:
+			changedN++
 		}
 		s.Conversations[c.UUID] = c.UpdatedAt
 		logf("  synced %.50s", c.Name)
@@ -282,6 +349,8 @@ func parseWatchArgs() (outDir string, interval time.Duration) {
 	if len(os.Args) > 3 {
 		if m, e := time.ParseDuration(os.Args[3] + "m"); e == nil && m > 0 {
 			interval = m
+		} else {
+			logf("ignoring invalid interval arg %q — using default %s", os.Args[3], interval)
 		}
 	}
 	return outDir, interval
@@ -326,7 +395,7 @@ func runCycle(outDir string) string {
 			}
 		} else {
 			s.LastSync = time.Now().UTC().Format(time.RFC3339)
-			s.LastCookieMod = mod
+			s.LastCookieMod, s.RetryCycles = cookieWatermark(mod, s.LastCookieMod, newN+changedN > 0, errN, s.RetryCycles)
 			if e := saveState(outDir, s); e != nil {
 				logf("state save error: %v", e)
 			}
@@ -388,8 +457,12 @@ func refreshSurfaces(outDir string) error {
 	}
 	docN, errN := harvestProjects(get, org, outDir)
 	logf("  projects: %d docs, %d errors", docN, errN)
-	if e := harvestMemory(get, org, outDir); e != nil {
-		return fmt.Errorf("memory: %w", e)
+	_, memErr := harvestMemory(get, org, outDir)
+	if errN > 0 || memErr != nil {
+		// Don't let a PARTIAL surfaces harvest be recorded as a completed 24h refresh: return
+		// an error so runCycle leaves LastSurfaces unset and retries next cycle instead of
+		// swallowing the project-doc failures and reporting "done".
+		return fmt.Errorf("surfaces incomplete: %d project-doc error(s), memory err=%v", errN, memErr)
 	}
 	return nil
 }

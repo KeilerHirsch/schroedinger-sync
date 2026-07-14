@@ -175,9 +175,15 @@ func TestConvToMarkdown(t *testing.T) {
 			t.Errorf("markdown missing %q\n%s", want, md)
 		}
 	}
-	// invalid JSON must fall back to the raw body rather than lose data
-	if got := convToMarkdown("not json"); got != "not json" {
-		t.Errorf("bad-JSON fallback=%q want raw passthrough", got)
+	// A non-JSON body (e.g. an HTML challenge/error page) must NOT be persisted as content
+	// (C1 fix): convToMarkdown returns "" so the caller skips the write.
+	if got := convToMarkdown("not json"); got != "" {
+		t.Errorf("non-JSON body must be rejected (empty), got %q", got)
+	}
+	// A JSON body that starts with "{" but fails to unmarshal into a conversation (here a
+	// type-mismatched field) is still kept verbatim rather than lost.
+	if got := convToMarkdown(`{"name":123}`); got != `{"name":123}` {
+		t.Errorf("unmapped JSON should pass through raw, got %q", got)
 	}
 }
 

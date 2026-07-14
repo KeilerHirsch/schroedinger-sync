@@ -15,6 +15,8 @@
 > [!IMPORTANT]
 > Find this useful? You can support development on **[Ko-fi](https://ko-fi.com/keilerhirsch)** ☕ — please mention *Schrödinger-Sync* so I know what to keep building.
 
+<p align="center"><img src="assets/showcase.svg" width="900" alt="Ephemeral claude.ai conversations, knowledge and memory captured into permanent local Markdown for your own AI memory"/></p>
+
 Exports your own claude.ai conversations, project knowledge docs, and memory to local
 Markdown — for feeding into your own local AI memory system (e.g.
 [MemPalace](https://github.com/MemPalace/mempalace)). Windows-only, single Go binary.

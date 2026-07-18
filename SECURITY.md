@@ -24,6 +24,23 @@ well enough to run this tool covertly would see a browser window pop up on the v
 screen — a terrible trade against any purpose-built infostealer, which doesn't need a
 GUI at all. This friction is the point, not an oversight.
 
+**On the DPAPI/EDR question, since it comes up:** `CryptUnprotectData` against a
+browser's own cookie store is the exact behavioral signature (MITRE ATT&CK T1555.003)
+that credential-stealing malware uses, and endpoint security products flag tools built
+on it — Microsoft Defender classifies GhostPack's SharpDPAPI/SharpChrome, LaZagne, and
+NirSoft's WebBrowserPassView this way even when signed, because that detection is
+behavioral, not signature-based. Code signing alone does not make this go away; that's
+expected, not a bug in this project's plan. Two things are worth keeping distinct: (1)
+what this tool does today — `CryptUnprotectData` against Claude Desktop's *own* cookie
+store, decrypting exactly one row, only ever within the OS session that created it (see
+point 1) — is the offensive-shaped side of that primitive, and any serious reviewer
+should expect an EDR to notice; (2) the *planned* encryption-at-rest work (README
+roadmap) uses `CryptProtectData`/a TPM-backed CNG key to wrap a key **this program
+generates itself**, which is the ordinary, defensive use of the same API family — the
+same mechanism Chrome, Windows, and ASP.NET Core Data Protection all use to store their
+own secrets. Conflating the two is an easy mistake for a scanner or a skimming reviewer
+to make; this document exists so a human doesn't have to.
+
 **3. It cannot exfiltrate anything.**
 Every output goes to local disk (`desktop-chats/`) or local MemPalace. There is no
 network client anywhere in this codebase capable of sending data to a third-party

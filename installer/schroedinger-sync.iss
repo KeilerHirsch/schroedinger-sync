@@ -79,6 +79,16 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "tray"; Description: "Schroedinge
 ; is invoked in stages (e.g. a repair-then-remove flow).
 Filename: "{app}\{#MyAppExeName}"; Parameters: "uninstall-task"; Flags: runhidden; RunOnceId: "RemoveAutostart"
 
+; Sweep runtime residue this program creates OUTSIDE {app} (so Inno Setup's own
+; per-{app}-folder cleanup never reaches it): the chrome-profile tree
+; ({localappdata}\SchroedingerSync\chrome-profile) and any leftover
+; {tmp-root}\schroedinger_* copyCookieDB temp dir from a crashed run. Must run before
+; uninstall-task removed the exe above only in the sense that both need the exe present —
+; order between the two doesn't otherwise matter, so this is a second, independent
+; RunOnceId, not chained to RemoveAutostart.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "cleanup-temp"; Flags: runhidden; RunOnceId: "CleanupTemp"
+
 ; Deliberately NOT removing the user's harvested data (desktop-chats\ under wherever
 ; they pointed the daemon) on uninstall — that's their exported private conversation
-; history, not installer state. Only the program files + autostart entry are removed.
+; history, not installer state. Only the program files, autostart entry, and this
+; program's own crash-residue temp locations are removed.

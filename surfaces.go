@@ -84,7 +84,7 @@ func harvestProjects(get func(string) (string, error), org, outDir string) (docN
 			}
 			md := fmt.Sprintf("# %s\n\n- Project: %s (%s)\n- Doc UUID: %s\n- Created: %s\n\n---\n\n%s\n",
 				d.FileName, p.Name, p.UUID, d.UUID, trunc(d.CreatedAt, 19), d.Content)
-			if werr := os.WriteFile(fname, []byte(md), 0o600); werr == nil { // #nosec G703 -- outDir is a local CLI arg, see cdp.go
+			if werr := os.WriteFile(fname, []byte(md), 0o600); werr == nil { // #nosec G304 G703 -- outDir is a local CLI arg, see cdp.go
 				docN++
 			} else {
 				errN++
@@ -120,7 +120,7 @@ func harvestMemory(get func(string) (string, error), org, outDir string) (wrote 
 	fname := filepath.Join(outDir, "claude-ai-memory.md")
 	md := fmt.Sprintf("# claude.ai Memory (org %s)\n\n- Harvested: %s\n\n---\n\n%s\n",
 		org, time.Now().Format(time.RFC3339), m.Memory)
-	if werr := os.WriteFile(fname, []byte(md), 0o600); werr != nil { // #nosec G703 -- outDir is a local CLI arg, see cdp.go
+	if werr := os.WriteFile(fname, []byte(md), 0o600); werr != nil { // #nosec G304 G703 -- outDir is a local CLI arg, see cdp.go
 		return false, werr
 	}
 	return true, nil

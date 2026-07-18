@@ -1,5 +1,125 @@
 # Changelog
 
+## Unreleased — gold-standard review pass + gated autostart
+
+Full ECC multi-agent review (Go + security reviewer) against HEAD, followed by a fix pass.
+Security surface came through clean (0 CRITICAL/HIGH/MEDIUM); Go review found 3 MEDIUM +
+5 LOW, all fixed. A second, independent review pass on the fix pass itself then caught one
+HIGH regression the first pass introduced (chrome-profile single-instance race, see below)
+before it ever shipped. Statement coverage 27.8% → 35.0%.
+
+**Fixed:**
+- **`cdpSmoke` (the default, no-argument command) reported "SMOKE TEST: GREEN" even after a
+  listing or parse failure** — an auth/Cloudflare error at exactly that step was signalled
+  as success. Now fails hard (`fatal`) on either error instead.
+- **9 `#nosec` annotations used a gosec rule ID (`G304`) that doesn't suppress this
+  codebase's actual path-taint finding (`G703`)** on 3 of those lines, silently leaving them
+  unsuppressed — caught by re-running gosec locally against the exact CI-pinned version
+  (v2.27.1) rather than trusting the claim that produced the wrong ID.
+- **The core harvest decision loop (`harvestOnce`) was untestable** — it opened its own
+  Chrome session internally, so the actionSkip/Seed/Fetch dispatch and progress counting had
+  no test coverage. Pulled into `syncConversations(get, org, outDir, s, all, delay)`, which
+  takes an already-open session as a parameter; now covered by `TestSyncConversations` and
+  `TestSyncConversationsDeadlineExceededAborts`.
+- **`probe-report.txt` was written to the current working directory**, not the tool's stable
+  data directory — scattered wherever the binary happened to be launched from. Now written
+  under `defaultOutDir()`.
+- **`probe` silently swallowed fetch errors** on two endpoints, producing an empty/misleading
+  report section with no indication the fetch itself had failed.
+- **`install-task`'s generated VBScript launcher had no defense against an embedded raw
+  CR/LF** in `outDir` (a literal `"` was already handled by existing quote-doubling) — such
+  a line break terminates the generated statement itself. Verified via actual `cscript.exe`
+  execution of the pre-fix-shaped output: it fails with a compile error
+  ("unterminated string constant"), i.e. the practical pre-fix impact is autostart silently
+  failing to install (a self-inflicted break), not attacker code execution — since the
+  quote-doubling already closes the only actual injection path. Still rejected outright
+  before the launcher is written, rather than shipping a launcher that can be broken by its
+  own input.
+- **The tray "Beenden" (quit) handler could race the background sync goroutine** into calling
+  `SetTooltip` on an already-`Remove()`d tray icon. A `shuttingDown` flag, checked under the
+  same mutex that already serializes both goroutines, closes the window.
+- **`logSink` was a plain package variable relying on an unenforced ordering invariant**
+  (`setupFileLog` must run before any goroutine reads it) — now behind an `atomic.Pointer`.
+- **A hard-killed run (crash/SIGKILL/panic — no `recover()` in this codebase) left an
+  anonymous Chrome profile in `%TEMP%`** holding the injected sessionKey cookie
+  (Chrome-encrypted, not plaintext, but unbounded on-disk footprint). Chrome now launches
+  with a pinned, per-PID `UserDataDir` under `%LOCALAPPDATA%`, swept at the start of every
+  session. Scoped by PID rather than one shared path: this tool has no single-instance
+  guard, and `supervise` autostart running alongside a manually-launched `tray`/`watch`/
+  one-shot command is an explicitly supported combination (see below) — a shared path would
+  let one instance's sweep delete a profile another instance's live Chrome still has open
+  (go-reviewer catch). The sweep also refuses to touch a reparse point/symlink rather than
+  blindly `RemoveAll`-ing through it, in case a future change ever makes that path less
+  fully predictable than it is today.
+- **`fetch()`'s JS string was built with Go's `%q`**, relying on an implicit "Go `%q` ≈ JS
+  escaping" equivalence. Replaced with `encoding/json`-based encoding — the documented,
+  canonical way to embed a Go string into JS source (also covers U+2028/U+2029, which `%q`
+  happened to escape correctly but not for a JS-specific reason).
+- **`isDesktopRunning()` could not tell Claude Desktop apart from Claude Code's own CLI**,
+  which also runs as a process literally named `claude.exe` (bundled inside the VS Code
+  extension) — so a sync cycle would report "Desktop is running" and skip, purely because
+  the CLI was active, even with Desktop fully closed. Now matched by executable path
+  (`WindowsApps\Claude_...`), not just image name.
+- **`install-task`'s autostart had no lifecycle at all** — it wired straight to `tray`, which
+  ran a sync cycle on a fixed interval forever regardless of whether anyone was at the
+  machine. New `supervise` subcommand (what `install-task` now registers) only runs cycles
+  while Claude Desktop or VS Code is open, and goes idle otherwise.
+
+**Added:**
+- CI: a separate `race` job (`go test -race`, `CGO_ENABLED=1` via provisioned mingw-w64) —
+  the concurrency this project has real hardening history with (`os.Stdout` redaction pipe,
+  tray shutdown race, `logSink`) is now checked by the actual detector, not by reading code.
+- **New `cleanup-temp` subcommand** — install/uninstall completeness gap: the installer's
+  `[UninstallRun]` only ever removed the autostart launcher, leaving two runtime-only
+  residue locations behind forever once nothing ever runs again to sweep them: the
+  chrome-profile tree under `%LOCALAPPDATA%` (only the *current* PID's subdirectory is
+  swept during normal operation, by design — see the PID-scoping fix above — so an old,
+  crashed PID's leftover is never revisited), and any `%TEMP%\schroedinger_*` copy
+  `copyCookieDB` (main.go) leaves behind from a hard-killed run (each gets a fresh random
+  name every session, so there's no fixed location for a future run to even check). Wired
+  into the installer's `[UninstallRun]` alongside `uninstall-task`, and also runs once at
+  every `watch`/`supervise`/`tray` startup for ongoing hygiene between uninstalls.
+  Deliberately does NOT touch `desktop-chats/` — that's the user's own exported
+  conversation history, not installer/runtime state.
+  **Caught and fixed before it ever shipped:** the first draft swept the ENTIRE
+  chrome-profile tree with one blind `RemoveAll`, which would have reintroduced the exact
+  class of bug the PID-scoping fix above exists to prevent — Chromium refuses `FILE_SHARE_*`
+  on some of its own profile files while running, so a concurrently-running instance's live
+  Chrome profile wouldn't cleanly resist deletion, it could have files removed out from
+  under it before the walk ever reached the one that blocks it. Now checks each
+  subdirectory's PID against `processAlive` (`windows.OpenProcess` +
+  `GetExitCodeProcess`/`STILL_ACTIVE`) and only sweeps ones whose process is actually gone;
+  the `%TEMP%\schroedinger_*` matches (no PID to check against — each name is random) are
+  filtered by age instead (`residueMinAge`, 5 minutes — far longer than any single
+  `copyCookieDB` call runs). Independently re-verified by a second Go-reviewer +
+  security-reviewer pass on this specific fix: `removeResidueTree`'s existence check used
+  `os.Stat` (follows a reparse point to its target), which for a *dangling* junction would
+  return not-exist and skip the `isReparsePoint` refusal entirely — switched to `os.Lstat`
+  to match `isReparsePoint`'s own non-following semantics. `main.go`'s usage string was
+  missing `supervise` (present in the dispatch switch, just not the help text) — added.
+  Added `TestCleanupTempSweepsOnlyDeadAndOldEntries`, an end-to-end test of the actual
+  assembled sweep logic (not just its primitives in isolation), via `t.Setenv`-redirected
+  `LOCALAPPDATA`/`TMP` fixtures. **Known, deliberately deferred residual gap** (same class
+  as this project's already-documented "single-instance guard" open question):
+  `processAlive` checks whether the schroedinger-sync.exe process that created a
+  chrome-profile subdirectory is still alive, not whether an orphaned Chrome *child*
+  outlived a hard-killed parent (os/exec doesn't tie child lifetime to parent via a Job
+  Object here) and is still using that directory under a different PID — closing that needs
+  scanning running processes' command lines for a matching `--user-data-dir`, real design
+  work, not folded into this round.
+- README/roadmap sharpened against fresh research (2026-07-17/18): the target-audience
+  paragraph now names the two sharpest buyer wedges specifically (law firms/§203 StGB,
+  healthcare/§393 SGB V+BSI C5) instead of a general EU/regulated-industries gesture; the
+  encryption-at-rest roadmap item is now a concrete envelope-encryption design (AES-256-GCM
+  exports, TPM-backed CNG key via the Platform Crypto Provider, DPAPI fallback); the
+  Ada/SPARK item is marked resolved (pure Go, SPARK stays conceptual — see the same-day
+  scoping findings) instead of left open-ended; added a session-key `[]byte`-and-zero
+  hardening item and a SHA-256 round-trip verbatim-integrity design for the native
+  MemPalace ingest handshake. SECURITY.md gained a short addition distinguishing the
+  offensive-shaped `CryptUnprotectData` this tool already does (point 1/2) from the planned
+  defensive `CryptProtectData`-wrapped-own-key use in the new encryption work, since
+  conflating the two is an easy mistake for a scanner or a skimming reviewer to make.
+
 ## v2.1.2 — sync-engine hardening round 2 (harvest data integrity)
 
 A second correctness pass on the harvest/sync engine, driven by a full byte-level teardown

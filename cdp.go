@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,10 +33,23 @@ import (
 	"github.com/chromedp/cdproto/network"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"golang.org/x/sys/windows"
 )
 
 func awaitPromise(p *cdpruntime.EvaluateParams) *cdpruntime.EvaluateParams {
 	return p.WithAwaitPromise(true)
+}
+
+// jsStringLiteral encodes s as a JSON string, which is also a valid, unambiguous JS string
+// literal — encoding/json additionally escapes U+2028/U+2029 (the two characters a raw JS
+// string literal can't contain even though JSON permits them), so it's the documented,
+// canonical way to embed a Go string into JS source, rather than relying on an implicit
+// "Go %q ~= JS escaping" equivalence that happens to hold today but isn't self-evident to a
+// future maintainer. json.Marshal only errors on unmarshalable types (channels, funcs,
+// cyclic values) — never for a plain string — so the ignored error is safe.
+func jsStringLiteral(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // trunc truncates s to at most n runes (not bytes) — a byte-indexed s[:n] can split a
@@ -85,6 +99,78 @@ type fullConv struct {
 
 // --- session (real Chrome, Cloudflare-cleared) ---
 
+// chromeProfileDir is a dedicated, pinned-per-process Chrome user-data directory alongside
+// this tool's own data (defaultOutDir's sibling), instead of chromedp's default anonymous
+// %TEMP%\chromedp-runner* directory. Pinning it means a run that dies before its normal
+// teardown() (crash, SIGKILL, a panic — this codebase has no recover()) leaves data in one
+// known, sweepable place instead of an unbounded set of anonymous %TEMP% leftovers.
+//
+// Scoped by os.Getpid(), not a single shared machine-wide path: this program has no
+// single-instance guard (install-task's `supervise` autostart and a manually-launched
+// `tray`/`watch`/one-shot `harvest` are an explicitly documented, expected combination —
+// see README's "Live sync" section), so a shared fixed directory would let one instance's
+// sweepChromeProfile() os.RemoveAll a profile another instance's live Chrome currently has
+// open (go-reviewer HIGH finding, 2026-07-18). No two concurrently-running processes ever
+// share a PID, so this eliminates the collision outright without needing the broader
+// single-instance lock CHANGELOG already flags as a separately, deliberately deferred
+// design (a stale leftover from a crashed process is still swept: a PID is never reused by
+// two processes that are simultaneously alive, so whatever sits at today's PID's path
+// cannot belong to another currently-running instance).
+func chromeProfileDir() string {
+	return filepath.Join(os.Getenv("LOCALAPPDATA"), "SchroedingerSync", "chrome-profile",
+		strconv.Itoa(os.Getpid()))
+}
+
+// sweepChromeProfile removes any leftover profile from a prior process that reused this
+// PID and never reached teardown(). Best-effort: a failed sweep (e.g. AV scanning the
+// directory) is logged and otherwise ignored — chromedp will simply reuse/extend whatever
+// is left rather than the harvest failing outright, and the next successful run's teardown
+// cleans up regardless.
+//
+// Refuses to touch a reparse point (junction/symlink) rather than blindly recursing into
+// or through it: os.RemoveAll on Windows unlinks a reparse point without following it, so
+// this is not an active vulnerability today, but chromeProfileDir()'s path is fully
+// predictable (%LOCALAPPDATA% + fixed segments + PID) — refusing a reparse point here means
+// a future change to this function (or to Go's RemoveAll semantics) can't silently turn
+// "predictable path" into "something else got deleted/followed instead." Pulled out as
+// sweepProfileDir(dir) — chromeProfileDir()'s real call site stays a fixed %LOCALAPPDATA%
+// path, but the guard logic itself is exercised against a t.TempDir() junction in
+// TestSweepProfileDirRefusesReparsePoint (cdp_test.go), not the real profile directory.
+func sweepChromeProfile() {
+	sweepProfileDir(chromeProfileDir())
+}
+
+func sweepProfileDir(dir string) {
+	if isReparsePoint(dir) {
+		logf("chrome profile sweep: refusing to remove %s — it's a reparse point/symlink, not a plain directory", dir)
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil { // #nosec G304 G703 -- dir is always chromeProfileDir()'s fixed %LOCALAPPDATA% path in production; only a test passes another value, from t.TempDir()
+		logf("chrome profile sweep: %v (non-fatal, continuing)", err)
+	}
+}
+
+// isReparsePoint reports whether path is a Windows reparse point (directory junction,
+// mount point, or symlink) rather than a plain file/directory. Measured empirically
+// (2026-07-18, this machine): os.Lstat's FileMode does NOT set os.ModeSymlink for an NTFS
+// junction created via `mklink /J` — fi.Mode()&os.ModeSymlink is always false for a
+// junction, which would have made a symlink-only guard silently never fire for exactly the
+// reparse-point kind Windows tooling (mklink /J, no admin required) most readily creates.
+// FILE_ATTRIBUTE_REPARSE_POINT, read directly via GetFileAttributes, is set for every
+// reparse point regardless of its specific reparse tag — confirmed 0x410
+// (REPARSE_POINT|DIRECTORY) for a real junction in this codebase's own test.
+func isReparsePoint(path string) bool {
+	p, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return false
+	}
+	attrs, err := windows.GetFileAttributes(p)
+	if err != nil {
+		return false // path doesn't exist/inaccessible -- nothing to refuse; os.RemoveAll below handles a missing path fine
+	}
+	return attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
 func setCookieAction(sessionKey string) chromedp.Action {
 	return chromedp.ActionFunc(func(ctx context.Context) error {
 		exp := cdp.TimeSinceEpoch(time.Now().Add(365 * 24 * time.Hour))
@@ -103,6 +189,15 @@ func openClaudeSession() (get func(string) (string, error), rawGet func(string) 
 	if e != nil || sessionKey == "" {
 		return nil, nil, nil, fmt.Errorf("sessionKey via DPAPI failed (close Claude Desktop first): %v", e)
 	}
+	// Sweep any leftover Chrome profile from a prior run that never reached its normal
+	// teardown() (crash, SIGKILL, an unrecovered panic — this codebase has no recover()).
+	// Without a pinned UserDataDir below, chromedp defaults to an anonymous
+	// %TEMP%\chromedp-runner* directory per launch; a hard-kill leaves it behind holding
+	// the injected sessionKey cookie (Chrome-encrypted with a profile-bound key, not
+	// plaintext, but still on-disk footprint) with nothing to ever clean it up. Pinning to
+	// one known path makes that footprint boundable instead of an unbounded set of
+	// anonymous leftovers, and this sweep clears whatever the previous run left.
+	sweepChromeProfile()
 	// logf (not fmt.Printf): openClaudeSession is reached both from the one-shot commands
 	// (main goroutine) AND from the tray daemon's refreshSurfaces on its background sync
 	// goroutine. Writing straight to the os.Stdout package variable would race with the
@@ -113,6 +208,7 @@ func openClaudeSession() (get func(string) (string, error), rawGet func(string) 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", false), // Cloudflare blocks old headless
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		chromedp.UserDataDir(chromeProfileDir()), // pinned, not chromedp's anonymous %TEMP% default — see sweepChromeProfile
 	)
 	allocCtx, cancelA := chromedp.NewExecAllocator(context.Background(), opts...)
 	// WithErrorf/WithLogf override chromedp's internal b.logf/b.errf directly (verified
@@ -138,14 +234,14 @@ func openClaudeSession() (get func(string) (string, error), rawGet func(string) 
 	get = func(path string) (string, error) {
 		var body string
 		err := chromedp.Run(ctx, chromedp.Evaluate(
-			fmt.Sprintf(`fetch(%q,{credentials:'include'}).then(r=>r.text())`, path),
+			fmt.Sprintf(`fetch(%s,{credentials:'include'}).then(r=>r.text())`, jsStringLiteral(path)),
 			&body, awaitPromise))
 		return body, err
 	}
 	rawGet = func(path string) (int, string, error) {
 		var out string
 		e := chromedp.Run(ctx, chromedp.Evaluate(
-			fmt.Sprintf(`fetch(%q,{credentials:'include'}).then(async r=>JSON.stringify({s:r.status,b:(await r.text()).slice(0,6000)}))`, path),
+			fmt.Sprintf(`fetch(%s,{credentials:'include'}).then(async r=>JSON.stringify({s:r.status,b:(await r.text()).slice(0,6000)}))`, jsStringLiteral(path)),
 			&out, awaitPromise))
 		if e != nil {
 			return 0, "", e
@@ -304,11 +400,11 @@ func cdpSmoke() {
 
 	list, lerr := getWithRetry(get, "/api/organizations/"+org+"/chat_conversations?limit=3&offset=0", 5)
 	if lerr != nil {
-		fmt.Println("[3b] list ERR:", lerr)
+		fatal("FAIL @list:", lerr)
 	}
 	var convs []convSummary
 	if json.Unmarshal([]byte(list), &convs) != nil {
-		fmt.Println("[3b] parse ERR:", trunc(list, 200))
+		fatal("FAIL @parse:", trunc(list, 200))
 	}
 	fmt.Printf("[3b] first page: %d conversations\n", len(convs))
 	for _, c := range convs {
@@ -402,10 +498,10 @@ func cdpHarvest() {
 	// no reason for group/world read access. outDir itself is always a caller-supplied
 	// CLI arg (self-inflicted at most, not attacker-controlled — see SECURITY.md), which
 	// is why gosec's taint analysis flags every os.MkdirAll/os.WriteFile/os.Stat call
-	// against it as G703; that's the CLI-argument pattern this tool is built around, not
+	// against it as G304; that's the CLI-argument pattern this tool is built around, not
 	// a path-traversal vector (no remote value ever reaches a filesystem path unsanitized
 	// — see sanitize() below).
-	if err := os.MkdirAll(outDir, 0o750); err != nil { // #nosec G703 -- outDir is a local CLI arg, not attacker input
+	if err := os.MkdirAll(outDir, 0o750); err != nil { // #nosec G304 G703 -- outDir is a local CLI arg, not attacker input
 		fatal("FAIL @mkdir:", err)
 	}
 
@@ -435,7 +531,7 @@ func cdpHarvest() {
 			fmt.Printf("  [%d/%d] SKIP %.40s: unexpected non-conversation response, not written\n", i+1, len(all), c.Name)
 			continue
 		}
-		if e := os.WriteFile(fname, []byte(md), 0o600); e != nil { // #nosec G703 -- see above
+		if e := os.WriteFile(fname, []byte(md), 0o600); e != nil { // #nosec G304 G703 -- see above
 			errN++
 			fmt.Printf("  [%d/%d] write ERR %.40s: %v\n", i+1, len(all), c.Name, e)
 			continue

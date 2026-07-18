@@ -24,8 +24,55 @@ Markdown — for feeding into your own local AI memory system (e.g.
 > [!NOTE]
 > **Early Access.** The harvest/export core is stable and covered by tests, but the
 > project is still actively evolving — expect breaking changes between minor versions
-> until v3. Roadmap: a native ingest handshake so exports feed straight into
-> [MemPalace](https://github.com/MemPalace/mempalace) without a format detour.
+> until v3.
+>
+> **Roadmap:**
+> 1. A native MemPalace ingest handshake so exports feed straight in without a format
+>    detour, verified rather than assumed: a SHA-256 hash of the source content taken
+>    before ingest and compared against a re-hash read back from the (encrypted) store
+>    after — a binary pass/fail, reported as an X/Y scorecard per sync batch, not a "should
+>    be lossless" claim.
+> 2. App-managed encryption at rest for the local data store and `desktop-chats/` exports
+>    — envelope encryption: a random AES-256 data key wraps the exports (AES-256-GCM),
+>    itself wrapped by a non-exportable, TPM-resident key via Windows CNG (the Platform
+>    Crypto Provider), with a DPAPI-CurrentUser copy as fallback. BitLocker alone doesn't
+>    satisfy strict enterprise reviewers — full-disk encryption only protects a powered-off,
+>    stolen drive; once Windows is running, it decrypts transparently for any authenticated
+>    process on the machine, which is exactly the multi-user/malware/forensic-live-mount
+>    threat model banks, law firms and hospitals actually test for. Scoped in depth
+>    (2026-07-18): pure Go (`microsoft/go-crypto-winnative`, `google/go-tpm`), no second
+>    toolchain — see point 3.
+> 3. **Resolved, not just a maybe:** Ada/SPARK stays a conceptual reference only, never a
+>    rewrite target. SPARK (the formally-verifiable Ada subset) can prove real properties
+>    about the ~50 lines of key-wrap glue code itself — provable zeroization, provable
+>    absence of an unintended information flow — but it cannot prove anything about the CNG/
+>    TPM library on the other side of the FFI call, which is the piece whose correctness
+>    the security claim actually rests on, in any language. Reuse-first also points hard at
+>    Go: zero existing permissively-licensed Ada/SPARK bindings for Windows CNG exist to
+>    build on, versus Microsoft's own MIT-licensed `go-crypto-winnative`.
+> 4. The DPAPI-decrypted sessionKey currently lives as a plain Go `string` (immutable,
+>    GC-managed, no guaranteed erasure) between `readSessionKey()` and `setCookieAction()`.
+>    Doesn't defend against a memory dump taken by something already running as the same
+>    logged-in user — SECURITY.md says so today — but the next hardening step is holding it
+>    as `[]byte` and actively zeroing it after use instead of trusting the GC.
+>
+> **Target audience:** built for individuals first (free, AGPLv3, forever) — a commercial
+> licence exists for organisations that need to embed or network-deploy a modified version
+> without AGPLv3's copyleft obligations. The two sharpest buyers: **law firms and other
+> professional-secrecy holders** (German §203 StGB makes disclosure of client secrets a
+> criminal offence, not just a GDPR fine — §43e BRAO restricts external AI processors
+> accordingly) and **healthcare** (§393 SGB V effectively requires BSI C5 certification for
+> cloud services touching health data since mid-2025). Behind those two: banks/insurers
+> (BAIT/VAIT/DORA auditability) and KRITIS/NIS2 operators (supply-chain liability reaching
+> named executives). The wedge underneath all of them: **"data residency" is not "data
+> sovereignty"** — an EU-hosted cloud instance is still subject to the US CLOUD Act, which
+> a fully local, zero-network-egress tool structurally isn't.
+>
+> **Coverage caveat:** the "no separate Cowork/Code/Design store" claim below was
+> verified against the API on 2026-07-02 (`platform` field only ever CLAUDE_AI/VOICE).
+> Claude Desktop's UI has visibly grown since (Projects/Artifacts/Scheduled/Send tabs) —
+> re-run `probe` against a current account before relying on that claim; if a surface
+> turns out to live outside `chat_conversations`, harvesting it is not yet covered.
 
 See [CHANGELOG.md](CHANGELOG.md) for what's new in v2 versus the retired v1
 (VS Code extension + Python CLI).
@@ -95,34 +142,38 @@ go build -trimpath -ldflags "-s -w" -o schroedinger-sync.exe .
 .\schroedinger-sync.exe            # auth smoke test (org + first 3 conversation titles)
 .\schroedinger-sync.exe harvest    # full export: chats + project docs + memory
 .\schroedinger-sync.exe probe      # dump the raw API schema + scan for new surfaces
-.\schroedinger-sync.exe watch      # headless live-sync daemon, no GUI
-.\schroedinger-sync.exe tray       # recommended: same daemon, with a system-tray icon
+.\schroedinger-sync.exe supervise  # what install-task registers: syncs only while Desktop/VS Code is open
+.\schroedinger-sync.exe watch      # headless live-sync daemon, no GUI, runs forever once started
+.\schroedinger-sync.exe tray       # same daemon, with a system-tray icon — manual/always-on use
 ```
 
 All commands require Claude Desktop to be **closed** — the cookie store is locked
 while it's running (see SECURITY.md, "It cannot target another user's account").
 
-## Live sync (`tray` / `watch`)
+## Live sync (`supervise` / `tray` / `watch`)
 
 ```
-.\schroedinger-sync.exe tray [outDir] [intervalMinutes]     # recommended: visible tray icon
-.\schroedinger-sync.exe watch [outDir] [intervalMinutes]    # headless, no GUI — default: see below, 30 min
-.\schroedinger-sync.exe install-task                        # register logon autostart (uses tray)
+.\schroedinger-sync.exe install-task                          # register logon autostart (uses supervise)
 .\schroedinger-sync.exe uninstall-task
+.\schroedinger-sync.exe supervise [outDir] [intervalMinutes]   # what install-task registers
+.\schroedinger-sync.exe tray [outDir] [intervalMinutes]        # visible tray icon, manual/always-on
+.\schroedinger-sync.exe watch [outDir] [intervalMinutes]       # headless, always-on — default interval: 30 min
 ```
 
-`tray` puts an icon in the notification area with a right-click menu: "Jetzt
-synchronisieren" (sync now), "Status anzeigen" (toast with the last cycle's result),
-"Logs öffnen" (opens sync.log), "Beenden" (quit). Hovering the icon shows live status
-in the tooltip. Both `tray` and `watch` run the exact same sync engine (`runCycle` in
-`daemon.go`) — `tray` just adds a visible, dismissible presence instead of a silent
-background process.
+`supervise` is the autostart mode: it stays resident at logon but only runs sync cycles
+while Claude Desktop or VS Code is actually open, and goes idle — no Chrome, no network,
+just a cheap process-list poll every 20s — once neither has been seen for a few
+consecutive polls. `tray`/`watch` are the always-on modes for a manual, foreground run;
+`tray` additionally puts an icon in the notification area with a right-click menu: "Jetzt
+synchronisieren" (sync now), "Status anzeigen" (toast with the last cycle's result), "Logs
+öffnen" (opens sync.log), "Beenden" (quit). All three share the exact same sync engine
+(`runCycle` in `daemon.go`).
 
-The daemon checks whether Claude Desktop is currently running before every cycle
+The engine also checks whether Claude Desktop is currently running before every cycle
 (`isDesktopRunning()` in `daemon.go`) and skips cleanly if it is — no failed sync
 attempts, no popped-up Chrome window while you're actively using Desktop. It only
 actually syncs in the windows where Desktop happens to be closed. If you keep Desktop
-open most of the time, this daemon will fire rarely by design — use `harvest` on demand
+open most of the time, sync cycles will fire rarely by design — use `harvest` on demand
 for anything time-sensitive.
 
 Project docs and memory are refreshed once every 24h (they change far less often than

@@ -23,6 +23,45 @@ import (
 	"testing"
 )
 
+// TestJsStringLiteral proves jsStringLiteral produces a JS-embeddable string literal for
+// every character class that could otherwise break out of, or otherwise corrupt, the
+// generated `fetch("...")` call — the fix for INFO-5 (previously fmt.Sprintf("%q", path),
+// which relied on an implicit "Go %q ~= JS escaping" equivalence instead of the documented
+// encoding/json guarantee).
+func TestJsStringLiteral(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+	}{
+		{"double quote", "a\"b"},
+		{"backslash", "a\\b"},
+		{"line separator U+2028", "a b"},      // valid JSON, invalid raw in a JS string literal
+		{"paragraph separator U+2029", "a b"}, // same class as U+2028, checked separately below
+		{"newline", "a\nb"},
+		{"ordinary API path", "/api/organizations/ORG/chat_conversations?limit=100&offset=0"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			lit := jsStringLiteral(c.in)
+			if len(lit) < 2 || lit[0] != '"' || lit[len(lit)-1] != '"' {
+				t.Fatalf("jsStringLiteral(%q) = %q, not a quoted literal", c.in, lit)
+			}
+			// The canonical round-trip check: what JSON.parse (and therefore a JS string
+			// literal with the same syntax) would decode this back to must equal the input.
+			var decoded string
+			if err := json.Unmarshal([]byte(lit), &decoded); err != nil {
+				t.Fatalf("jsStringLiteral(%q) produced invalid JSON/JS literal %q: %v", c.in, lit, err)
+			}
+			if decoded != c.in {
+				t.Errorf("round-trip mismatch: got %q, want %q", decoded, c.in)
+			}
+			if strings.ContainsRune(lit, ' ') || strings.ContainsRune(lit, ' ') {
+				t.Errorf("jsStringLiteral(%q) = %q still contains a raw line/paragraph separator", c.in, lit)
+			}
+		})
+	}
+}
+
 func TestTruncIsRuneSafe(t *testing.T) {
 	cases := []struct {
 		in   string

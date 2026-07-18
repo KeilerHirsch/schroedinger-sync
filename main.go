@@ -273,18 +273,22 @@ func main() {
 	case "probe":
 		cdpProbe() // surface discovery: schema dump + sibling-endpoint scan
 	case "watch":
-		watchLoop() // headless live-sync daemon, no GUI (Desktop-process-gated incremental harvest)
+		watchLoop() // headless live-sync daemon, no GUI (Desktop-process-gated incremental harvest), runs forever once started
+	case "supervise":
+		superviseLoop() // what install-task registers: like watch, but only while Desktop or VS Code is open — idle otherwise
 	case "tray":
-		trayMain() // recommended: same daemon, with a visible system-tray icon
+		trayMain() // same daemon, with a visible system-tray icon — for a manually-launched, always-on run
 	case "install-task":
 		installTask() // register logon autostart (user session, DPAPI + interactive Chrome)
 	case "uninstall-task":
 		uninstallTask()
+	case "cleanup-temp":
+		cleanupTemp() // sweep chrome-profile tree + %TEMP%\schroedinger_* leftovers (also wired into the installer's uninstall step)
 	case "", "smoke":
 		cdpSmoke() // default: auth smoke test (org + first 3 titles)
 	default:
 		fatal("unknown command:", cmd,
-			"\nvalid: (no arg)|smoke, harvest, probe, watch, tray, install-task, uninstall-task")
+			"\nvalid: (no arg)|smoke, harvest, probe, watch, supervise, tray, install-task, uninstall-task, cleanup-temp")
 	}
 }
 

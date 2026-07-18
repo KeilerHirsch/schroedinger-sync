@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -56,8 +57,12 @@ func cdpProbe() {
 
 	// 1) Raw schema of the chat_conversations summaries. If a surface discriminator
 	//    (type / product / is_code / conversation_type ...) exists, it shows up here.
-	first, _ := getWithRetry(get, "/api/organizations/"+org+"/chat_conversations?limit=3&offset=0", 5)
-	w("\n## chat_conversations first page (raw, limit=3)\n%s", trunc(first, 6000))
+	first, ferr := getWithRetry(get, "/api/organizations/"+org+"/chat_conversations?limit=3&offset=0", 5)
+	if ferr != nil {
+		w("\n## chat_conversations first page: FETCH ERR: %v", ferr)
+	} else {
+		w("\n## chat_conversations first page (raw, limit=3)\n%s", trunc(first, 6000))
+	}
 
 	var items []map[string]json.RawMessage
 	if json.Unmarshal([]byte(first), &items) == nil && len(items) > 0 {
@@ -111,12 +116,14 @@ func cdpProbe() {
 	// 3) Projects: list all, and probe the docs/knowledge sub-resource of the first one
 	//    so we know the exact endpoint shape before writing the harvest.
 	w("\n## projects (own resource — the project folders + their knowledge/docs)")
-	projBody, _ := getWithRetry(get, "/api/organizations/"+org+"/projects", 3)
+	projBody, perr := getWithRetry(get, "/api/organizations/"+org+"/projects", 3)
 	var projs []struct {
 		UUID string `json:"uuid"`
 		Name string `json:"name"`
 	}
-	if json.Unmarshal([]byte(projBody), &projs) != nil {
+	if perr != nil {
+		w("  projects FETCH ERR: %v", perr)
+	} else if json.Unmarshal([]byte(projBody), &projs) != nil {
 		w("  projects parse ERR: %s", trunc(projBody, 200))
 	}
 	w("  %d projects:", len(projs))
@@ -137,9 +144,18 @@ func cdpProbe() {
 	w("  /memory HTTP %d, body length=%d chars", memSt, len(memBody))
 	w("  head: %s", trunc(strings.ReplaceAll(memBody, "\n", " "), 400))
 
-	if err := os.WriteFile("probe-report.txt", []byte(out.String()), 0o600); err != nil {
+	// defaultOutDir(), not CWD-relative: probe can be launched from a Start Menu icon,
+	// Desktop shortcut, or Task Scheduler with an unpredictable working directory — the
+	// same reasoning daemon.go's defaultOutDir doc comment lays out for every other
+	// artifact this tool writes. A bare "probe-report.txt" used to scatter into whatever
+	// folder happened to be current, and its content (org_id, conversation titles, project
+	// names, a raw JSON page) is private even though the sessionKey itself is redacted.
+	reportPath := filepath.Join(defaultOutDir(), "probe-report.txt")
+	if err := os.MkdirAll(defaultOutDir(), 0o750); err != nil { // #nosec G304 G703 -- defaultOutDir is a fixed %LOCALAPPDATA% path, not variable input
+		fmt.Println("(could not create data dir for probe-report.txt:", err, ")")
+	} else if err := os.WriteFile(reportPath, []byte(out.String()), 0o600); err != nil { // #nosec G304 G703 -- see above
 		fmt.Println("(could not write probe-report.txt:", err, ")")
 	} else {
-		fmt.Println("\nwrote probe-report.txt — paste it back or let Claude read it.")
+		fmt.Println("\nwrote", reportPath, "— paste it back or let Claude read it.")
 	}
 }

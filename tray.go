@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gogpu/systray"
@@ -56,6 +57,7 @@ var trayMu sync.Mutex
 func trayMain() {
 	outDir, interval := parseWatchArgs()
 	setupFileLog(outDir)
+	cleanupTemp() // once per daemon startup, not per cycle -- sweeps crash residue from PIDs that will never run again
 	logf("schroedinger tray: outDir=%s interval=%s", outDir, interval)
 
 	tray := systray.New()
@@ -63,6 +65,14 @@ func trayMain() {
 
 	status := &statusHolder{s: "wird geprüft…"}
 	syncNow := make(chan struct{}, 1)
+	// shuttingDown is set BEFORE Beenden takes trayMu/removes the icon. The sync goroutine
+	// checks it under the SAME mutex before every SetTooltip call (L1 fix): trayMu already
+	// serializes the two goroutines against each other, so once this flag is visibly true,
+	// no critical section entered afterwards — by either goroutine — can call into the
+	// tray object post-Remove(). One in-flight SetTooltip call that started its critical
+	// section before the flag flipped is still safe: Beenden's own trayMu.Lock() blocks
+	// until that section finishes, so Remove() cannot race ahead of it.
+	var shuttingDown atomic.Bool
 
 	menu.Add("Jetzt synchronisieren", func() {
 		select {
@@ -82,6 +92,7 @@ func trayMain() {
 	})
 	menu.AddSeparator()
 	menu.Add("Beenden", func() {
+		shuttingDown.Store(true)
 		trayMu.Lock()
 		tray.Remove()
 		trayMu.Unlock()
@@ -105,12 +116,19 @@ func trayMain() {
 	go func() {
 		for {
 			trayMu.Lock()
-			_ = tray.SetTooltip("Schroedinger Sync — synchronisiere…")
+			if !shuttingDown.Load() {
+				_ = tray.SetTooltip("Schroedinger Sync — synchronisiere…")
+			}
 			trayMu.Unlock()
 			status.set(runCycle(outDir))
 			trayMu.Lock()
-			_ = tray.SetTooltip("Schroedinger Sync — " + status.get())
+			if !shuttingDown.Load() {
+				_ = tray.SetTooltip("Schroedinger Sync — " + status.get())
+			}
 			trayMu.Unlock()
+			if shuttingDown.Load() {
+				return // Beenden is tearing down (or already has) — no point starting another cycle
+			}
 			select {
 			case <-time.After(interval):
 			case <-syncNow:

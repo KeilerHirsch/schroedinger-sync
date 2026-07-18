@@ -43,3 +43,31 @@ jobs:
 
       - name: go mod verify
         run: go mod verify
+
+  race:
+    # -race needs cgo (a real C toolchain), which the verify job above deliberately does
+    # NOT provision — CGO_ENABLED=0 is a project constraint for the release binary itself
+    # (see tray.go's "pure Go, zero CGO" doc comment and go.mod), so this stays a fully
+    # separate job that only runs `go test -race` and never touches the release build.
+    # Exists specifically so the concurrency this project has a real hardening history with
+    # (the os.Stdout redaction pipe, the tray shutdown-vs-sync-goroutine race, logSink) is
+    # checked by the actual race detector on every push, not verified by reading code alone.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: go test -race
+        shell: msys2 {0}
+        env:
+          CGO_ENABLED: 1
+        run: go test -race ./...

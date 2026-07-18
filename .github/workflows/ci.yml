@@ -61,6 +61,7 @@ jobs:
           msystem: MINGW64
           update: true
           install: mingw-w64-x86_64-gcc
+          path-type: inherit
 
       - uses: actions/setup-go@v6
         with:

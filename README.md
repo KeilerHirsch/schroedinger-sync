@@ -8,7 +8,7 @@
 <p align="center"><em>Your Claude conversations live in superposition — capture them to local Markdown before the session collapses.</em></p>
 
 <p align="center">
-  <a href="https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml"><img src="https://github.com/KeilerHirsch/schroedinger-sync/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/KeilerHirsch-Labs/schroedinger-sync/actions/workflows/ci.yml"><img src="https://github.com/KeilerHirsch-Labs/schroedinger-sync/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3"></a>
 </p>
 
@@ -21,6 +21,33 @@ Exports your own claude.ai conversations, project knowledge docs, and memory to 
 Markdown — for feeding into your own local AI memory system (e.g.
 [MemPalace](https://github.com/MemPalace/mempalace)). Windows-only, single Go binary.
 
+## Why this exists
+
+Claude today is three separate products that don't talk to each other: claude.ai Web,
+Claude Desktop, and Claude Code (VS Code/CLI). Use more than one of them — most power
+users do — and each surface holds its own account state and conversation history, with
+nothing bridging them natively.
+
+If you've built a local, persistent memory store on the Claude Code side (a semantic
+search over your own project history, decisions, past sessions), that gap turns very
+concrete: Claude Code queries years of accumulated context in a few hundred
+milliseconds. A claude.ai Web or Desktop session running in parallel on the exact same
+account has none of it — no shared filesystem, no shared MCP server, no query path into
+the other surface's memory.
+
+The tax shows up every time something changes on one side and needs to reach the
+other: writing a summary by hand, opening the other surface, pasting it in, hoping it's
+read before that session goes stale too. That's not hypothetical friction — it's the
+literal manual workaround this project replaces. Multiply it by however often a real
+workflow crosses surfaces, and it's recurring, unpaid busywork — exactly what an AI
+assistant is supposed to remove, not create.
+
+Schrödinger-Sync closes that gap from the Web/Desktop side: it exports what claude.ai
+already knows — conversations, project docs, memory — into a local, greppable,
+version-controlled Markdown store that a memory system like MemPalace can ingest. Point
+Claude Code at the same store, and continuity across all three surfaces stops depending
+on a human being the sync layer.
+
 > [!NOTE]
 > **Early Access.** The harvest/export core is stable and covered by tests, but the
 > project is still actively evolving — expect breaking changes between minor versions
@@ -32,25 +59,46 @@ Markdown — for feeding into your own local AI memory system (e.g.
 >    before ingest and compared against a re-hash read back from the (encrypted) store
 >    after — a binary pass/fail, reported as an X/Y scorecard per sync batch, not a "should
 >    be lossless" claim.
-> 2. App-managed encryption at rest for the local data store and `desktop-chats/` exports
+> 2. A native bridge so a claude.ai Web/Desktop session can *query* a running local
+>    MemPalace instance directly, not just feed it one-way via the ingest handshake above:
+>    the machine already running MemPalace exposes it as a remote MCP endpoint over a
+>    tunnel (Cloudflare Tunnel / Tailscale Funnel — no port-forwarding, no VPS, home IP
+>    never touches DNS). A read-only tool allowlist sits at the gateway (status/search/list
+>    only) because claude.ai's server-side read/write lock is a Team/Enterprise feature,
+>    not available on an individual plan. This is the direct fix for the gap described in
+>    "Why this exists" above — point 1 gets data *into* MemPalace, this gets it back *out*
+>    to Web/Desktop.
+> 3. App-managed encryption at rest for the local data store and `desktop-chats/` exports
 >    — envelope encryption: a random AES-256 data key wraps the exports (AES-256-GCM),
->    itself wrapped by a non-exportable, TPM-resident key via Windows CNG (the Platform
->    Crypto Provider), with a DPAPI-CurrentUser copy as fallback. BitLocker alone doesn't
->    satisfy strict enterprise reviewers — full-disk encryption only protects a powered-off,
->    stolen drive; once Windows is running, it decrypts transparently for any authenticated
->    process on the machine, which is exactly the multi-user/malware/forensic-live-mount
->    threat model banks, law firms and hospitals actually test for. Scoped in depth
->    (2026-07-18): pure Go (`microsoft/go-crypto-winnative`, `google/go-tpm`), no second
->    toolchain — see point 3.
-> 3. **Resolved, not just a maybe:** Ada/SPARK stays a conceptual reference only, never a
+>    itself wrapped by a non-exportable, TPM-resident key via Windows CNG's Platform Crypto
+>    Provider (NCrypt) or a raw TPM 2.0 command channel, with a DPAPI-CurrentUser copy as
+>    fallback. BitLocker alone doesn't satisfy strict enterprise reviewers — full-disk
+>    encryption only protects a powered-off, stolen drive; once Windows is running, it
+>    decrypts transparently for any authenticated process on the machine, which is exactly
+>    the multi-user/malware/forensic-live-mount threat model banks, law firms and hospitals
+>    actually test for.
+>    **Library choice, verified against source (2026-07-19), not assumed:** no pure-Go
+>    library wraps NCrypt/the Platform Crypto Provider directly. `microsoft/go-crypto-winnative`
+>    was considered and ruled out — its `cng` package (inspected file-by-file) implements
+>    only symmetric/asymmetric primitives (AES, RSA, ECDSA, HMAC, …) for FIPS-mode Go
+>    builds, zero NCrypt/PCP surface, confirmed by a zero-result code search for
+>    `NCryptOpenStorageProvider` in that repo. `golang.org/x/sys/windows` doesn't ship
+>    NCrypt bindings either — only the generic LazyDLL syscall mechanism a hand-rolled
+>    NCrypt layer would sit on top of. The lower-effort path with no missing-library
+>    problem: `google/go-tpm`'s `legacy/tpm2` package, which opens a genuine Windows TPM
+>    2.0 channel via `Tbs.dll` (its own `open_windows.go` calls straight into
+>    `tpmutil/tbs`) — raw TPM 2.0 commands instead of the NCrypt/PCP abstraction, but real
+>    and working today. `go-tpm`'s newer TPMDirect API is still labeled prototype by its
+>    own README (as of 2026-06); stick to `legacy/tpm2`.
+> 4. **Resolved, not just a maybe:** Ada/SPARK stays a conceptual reference only, never a
 >    rewrite target. SPARK (the formally-verifiable Ada subset) can prove real properties
 >    about the ~50 lines of key-wrap glue code itself — provable zeroization, provable
->    absence of an unintended information flow — but it cannot prove anything about the CNG/
->    TPM library on the other side of the FFI call, which is the piece whose correctness
+>    absence of an unintended information flow — but it cannot prove anything about the TPM
+>    channel on the other side of the FFI call, which is the piece whose correctness
 >    the security claim actually rests on, in any language. Reuse-first also points hard at
->    Go: zero existing permissively-licensed Ada/SPARK bindings for Windows CNG exist to
->    build on, versus Microsoft's own MIT-licensed `go-crypto-winnative`.
-> 4. The DPAPI-decrypted sessionKey currently lives as a plain Go `string` (immutable,
+>    Go: zero existing permissively-licensed Ada/SPARK bindings for Windows TBS/NCrypt
+>    exist to build on, versus Go's already-working `google/go-tpm` `legacy/tpm2` path above.
+> 5. The DPAPI-decrypted sessionKey currently lives as a plain Go `string` (immutable,
 >    GC-managed, no guaranteed erasure) between `readSessionKey()` and `setCookieAction()`.
 >    Doesn't defend against a memory dump taken by something already running as the same
 >    logged-in user — SECURITY.md says so today — but the next hardening step is holding it
@@ -121,7 +169,7 @@ live inside the same `chat_conversations` API, distinguished only by a `platform
 ## Installation
 
 **Recommended — installer:** grab `SchroedingerSyncSetup.exe` from the
-[latest release](https://github.com/KeilerHirsch/schroedinger-sync/releases/latest)
+[latest release](https://github.com/KeilerHirsch-Labs/schroedinger-sync/releases/latest)
 and run it. Per-user, no admin rights needed. It installs to
 `%LOCALAPPDATA%\SchroedingerSync`, optionally adds a desktop icon, and
 optionally registers itself to start in the tray on logon — all opt-in

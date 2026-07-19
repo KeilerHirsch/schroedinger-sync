@@ -59,6 +59,12 @@ on a human being the sync layer.
 >    before ingest and compared against a re-hash read back from the (encrypted) store
 >    after — a binary pass/fail, reported as an X/Y scorecard per sync batch, not a "should
 >    be lossless" claim.
+>    **Write side shipped (v2.2.0):** every exported file's SHA-256 is now recorded in
+>    `outDir/.content-hashes.json` at write time (`integrity.go`), crash-safe by design
+>    (saved per-file, not batched, so an interrupted harvest never loses a hash for a file
+>    already on disk). The **read-back half is still open** — a re-hash from MemPalace's
+>    own store, compared against this manifest, reported as the X/Y scorecard — because it
+>    needs a matching change on the ingest side (a separate repo); tracked, not forgotten.
 > 2. A native bridge so a claude.ai Web/Desktop session can *query* a running local
 >    MemPalace instance directly, not just feed it one-way via the ingest handshake above:
 >    the machine already running MemPalace exposes it as a remote MCP endpoint over a

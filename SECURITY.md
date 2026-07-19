@@ -67,7 +67,14 @@ file and `probe-report.txt` (both route through the same `redact()` call). Enfor
 (Scope: this covers every output path this program controls. It does not protect
 against out-of-band forensics of the process's own memory — a debugger or memory dump
 taken by someone who already has code-execution as the same Windows user, who could
-just call `CryptUnprotectData` on `Local State`/`Cookies` directly instead.)
+just call `CryptUnprotectData` on `Local State`/`Cookies` directly instead. Since v2.2.0,
+the raw AES master key and raw decrypted plaintext ([]byte, unlike the immutable `string`
+this function returns) are explicitly zeroed (`security.go`'s `zeroBytes`, deferred in
+`readSessionKey`) the moment their last read completes — this narrows, but does not
+close, the window an attacker with that level of access would have; the returned
+`sessionKey` string itself is still held for the session's lifetime by design, both as
+the CDP cookie value in use and in the redactor's own registry, so it can keep scrubbing
+output for as long as the program runs.)
 
 **5. Only the minimum secret is ever decrypted.**
 Earlier versions of this tool decrypted the *entire* claude.ai cookie jar (session key,

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — gold-standard review pass + gated autostart
+## v2.2.0 — ingest integrity + sessionKey hardening + gold-standard review pass
 
 Full ECC multi-agent review (Go + security reviewer) against HEAD, followed by a fix pass.
 Security surface came through clean (0 CRITICAL/HIGH/MEDIUM); Go review found 3 MEDIUM +
@@ -135,6 +135,37 @@ before it ever shipped. Statement coverage 27.8% → 35.0%.
   offensive-shaped `CryptUnprotectData` this tool already does (point 1/2) from the planned
   defensive `CryptProtectData`-wrapped-own-key use in the new encryption work, since
   conflating the two is an easy mistake for a scanner or a skimming reviewer to make.
+
+**Added:**
+- **Write-side SHA-256 manifest — the first half of the native MemPalace ingest handshake**
+  (README roadmap #1). Every export write (`cdpHarvest`'s one-shot chat harvest,
+  `syncConversations`' daemon-cycle writes, `harvestProjects`/`harvestMemory`'s project-doc
+  and memory-blob writes) now routes through a single new choke point,
+  `writeMarkdown(outDir, fname, content)` (`integrity.go`), which writes the file and
+  records its SHA-256 in `outDir/.content-hashes.json`, keyed by filename. Loaded and saved
+  *per file*, not batched like `.sync-state.json` — deliberately, so a harvest interrupted
+  mid-way (`context.DeadlineExceeded` is an existing, handled failure mode in this codebase)
+  never loses the hash record for a file that already safely reached disk; the manifest is
+  exactly as durable as the files it describes. Only the write side is shipped here — the
+  read-back half (a re-hash pulled from MemPalace's own store, compared against this
+  manifest, reported as an X/Y scorecard) needs a corresponding change in the separate
+  mempalace-src ingest pipeline and is intentionally not built in this repo; README marks it
+  open rather than implying the full round-trip exists.
+- **sessionKey/master-key zero-hardening.** The raw AES master key (`loadMasterKey`) and the
+  raw decrypted sessionKey plaintext (`decryptValue`'s return) are `[]byte` — unlike the
+  immutable `string` `readSessionKey` ultimately returns, a `[]byte` can actually be
+  overwritten. New `zeroBytes()` (`security.go`) is now `defer`red onto both, right after
+  each buffer's last read (`loadMasterKey`'s key right after acquisition, `pt` right after
+  `cleanValue` extracts its own independent string copy — a Go `string(byteSlice)`
+  conversion always copies, never aliases, so zeroing the source slice afterward cannot
+  corrupt the value already handed to the caller). Deliberately does NOT touch the redactor's
+  own `secrets []string` registry (`RegisterSecret`/`redact`) — that copy is kept alive for
+  the whole process lifetime on purpose, so stdout/log output stays scrubbed for as long as
+  the program runs; converting it to zeroable bytes would break that single-choke-point
+  redaction guarantee for no real gain. Narrows, does not close, the window covered by
+  SECURITY.md point 4's existing "does not protect against a memory dump" caveat. A tripwire
+  test (`TestReadSessionKeyZeroesLocalSecrets`, same static-source-scan idiom as the existing
+  `TestHeadlessIsHardcoded`) fails CI if a future refactor drops either `defer`.
 
 ## v2.1.2 — sync-engine hardening round 2 (harvest data integrity)
 

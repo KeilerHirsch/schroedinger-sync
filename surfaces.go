@@ -83,11 +83,18 @@ func harvestProjects(get func(string) (string, error), org, outDir string) (docN
 			}
 			md := fmt.Sprintf("# %s\n\n- Project: %s (%s)\n- Doc UUID: %s\n- Created: %s\n\n---\n\n%s\n",
 				d.FileName, p.Name, p.UUID, d.UUID, trunc(d.CreatedAt, 19), d.Content)
-			if werr := writeMarkdown(outDir, fname, []byte(md)); werr == nil {
-				docN++
-			} else {
+			ok, werr := writeMarkdown(outDir, fname, []byte(md))
+			switch {
+			case werr != nil:
 				errN++
 				logf("    [%s] write ERR %.30s: %v", trunc(p.Name, 30), d.FileName, werr)
+			case !ok:
+				// Manifest failure never fails the export — same reasoning as daemon.go's
+				// syncConversations — but stays visible rather than silent (go-reviewer MEDIUM).
+				logf("    [%s] manifest ERR %.30s (export itself succeeded)", trunc(p.Name, 30), d.FileName)
+				docN++
+			default:
+				docN++
 			}
 			time.Sleep(150 * time.Millisecond)
 		}
@@ -119,8 +126,14 @@ func harvestMemory(get func(string) (string, error), org, outDir string) (wrote 
 	fname := filepath.Join(outDir, "claude-ai-memory.md")
 	md := fmt.Sprintf("# claude.ai Memory (org %s)\n\n- Harvested: %s\n\n---\n\n%s\n",
 		org, time.Now().Format(time.RFC3339), m.Memory)
-	if werr := writeMarkdown(outDir, fname, []byte(md)); werr != nil {
+	ok, werr := writeMarkdown(outDir, fname, []byte(md))
+	if werr != nil {
 		return false, werr
+	}
+	if !ok {
+		// Manifest failure never fails the export (the memory blob is already on disk) but
+		// stays visible rather than silent (go-reviewer MEDIUM finding).
+		logf("  memory manifest ERR (export itself succeeded)")
 	}
 	return true, nil
 }

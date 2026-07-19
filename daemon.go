@@ -377,10 +377,17 @@ func syncConversations(get func(string) (string, error), org, outDir string, s *
 			logf("  SKIP %.40s: unexpected non-conversation response, not written", c.Name)
 			continue
 		}
-		if werr := writeMarkdown(outDir, fname, []byte(md)); werr != nil {
+		ok, werr := writeMarkdown(outDir, fname, []byte(md))
+		if werr != nil {
 			errN++
 			logf("  write ERR %.40s: %v", c.Name, werr)
 			continue
+		}
+		if !ok {
+			// Manifest failure never fails the sync (the export itself is fine) but must stay
+			// visible — a persistent cause (e.g. AV locking .content-hashes.json) would otherwise
+			// repeat silently every cycle in a hidden/autostart daemon (go-reviewer MEDIUM finding).
+			logf("  manifest ERR %.40s (export itself succeeded)", c.Name)
 		}
 		// Count as progress only when the state actually moved — a new conversation or a
 		// genuine server-side change. Re-writing an UNCHANGED conversation merely to heal a

@@ -42,8 +42,8 @@ func TestWriteMarkdownRecordsHashInManifest(t *testing.T) {
 	fname := filepath.Join(dir, "chat_abc123.md")
 	content := []byte("# Test conversation\n\nbody\n")
 
-	if err := writeMarkdown(dir, fname, content); err != nil {
-		t.Fatalf("writeMarkdown: %v", err)
+	if ok, err := writeMarkdown(dir, fname, content); err != nil || !ok {
+		t.Fatalf("writeMarkdown: ok=%v err=%v", ok, err)
 	}
 
 	if got, err := os.ReadFile(fname); err != nil || string(got) != string(content) {
@@ -61,10 +61,10 @@ func TestWriteMarkdownOverwriteUpdatesHash(t *testing.T) {
 	dir := t.TempDir()
 	fname := filepath.Join(dir, "chat.md")
 
-	if err := writeMarkdown(dir, fname, []byte("version one")); err != nil {
+	if _, err := writeMarkdown(dir, fname, []byte("version one")); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
-	if err := writeMarkdown(dir, fname, []byte("version two, longer content")); err != nil {
+	if _, err := writeMarkdown(dir, fname, []byte("version two, longer content")); err != nil {
 		t.Fatalf("second write: %v", err)
 	}
 
@@ -82,12 +82,12 @@ func TestWriteMarkdownOverwriteUpdatesHash(t *testing.T) {
 func TestWriteMarkdownManifestSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := writeMarkdown(dir, filepath.Join(dir, "a.md"), []byte("A")); err != nil {
+	if _, err := writeMarkdown(dir, filepath.Join(dir, "a.md"), []byte("A")); err != nil {
 		t.Fatalf("write a.md: %v", err)
 	}
 	// Simulate a crash/restart between writes: nothing here carries in-memory state
 	// forward except what writeMarkdown itself persisted.
-	if err := writeMarkdown(dir, filepath.Join(dir, "b.md"), []byte("B")); err != nil {
+	if _, err := writeMarkdown(dir, filepath.Join(dir, "b.md"), []byte("B")); err != nil {
 		t.Fatalf("write b.md: %v", err)
 	}
 
@@ -97,6 +97,34 @@ func TestWriteMarkdownManifestSurvivesRestart(t *testing.T) {
 	}
 	if m["b.md"] != hashContent([]byte("B")) {
 		t.Errorf("b.md hash missing: %v", m)
+	}
+}
+
+// TestWriteMarkdownReportsManifestFailureWithoutFailingTheWrite proves the go-reviewer's
+// MEDIUM finding is addressed: a manifest-save failure must surface via the manifestOK
+// return value (so a caller can count it), but must NOT be reported as if the export
+// itself failed -- the Markdown file is already safely on disk by the time saveManifest
+// runs. Failure is induced deterministically (no OS-specific mocking): pre-creating the
+// manifest path AS A DIRECTORY makes saveManifest's final os.Rename fail (you cannot
+// rename a file onto an existing directory), while outDir itself stays fully writable so
+// the real content file write is unaffected.
+func TestWriteMarkdownReportsManifestFailureWithoutFailingTheWrite(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(manifestPath(dir), 0o750); err != nil {
+		t.Fatalf("seed manifest-path-is-a-directory: %v", err)
+	}
+
+	fname := filepath.Join(dir, "chat.md")
+	ok, err := writeMarkdown(dir, fname, []byte("body"))
+
+	if err != nil {
+		t.Fatalf("writeMarkdown must not fail the export over a manifest error, got: %v", err)
+	}
+	if ok {
+		t.Fatal("expected manifestOK=false when the manifest path is unwritable")
+	}
+	if got, rerr := os.ReadFile(fname); rerr != nil || string(got) != "body" {
+		t.Fatalf("content file must still be written correctly: got %q, err %v", got, rerr)
 	}
 }
 

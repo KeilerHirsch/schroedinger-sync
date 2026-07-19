@@ -506,7 +506,7 @@ func cdpHarvest() {
 	}
 
 	// 2) fetch each full conversation -> Markdown (incremental, rate-limit-friendly)
-	newN, skip, errN := 0, 0, 0
+	newN, skip, errN, manifestErrN := 0, 0, 0, 0
 	for i, c := range all {
 		fname := convFilename(outDir, c)
 		if fileIsCurrent(fname, c) { // on-disk header matches server -> already current (was: size-only, which never refreshed a changed conversation)
@@ -531,16 +531,24 @@ func cdpHarvest() {
 			fmt.Printf("  [%d/%d] SKIP %.40s: unexpected non-conversation response, not written\n", i+1, len(all), c.Name)
 			continue
 		}
-		if e := writeMarkdown(outDir, fname, []byte(md)); e != nil {
+		ok, e := writeMarkdown(outDir, fname, []byte(md))
+		if e != nil {
 			errN++
 			fmt.Printf("  [%d/%d] write ERR %.40s: %v\n", i+1, len(all), c.Name, e)
 			continue
+		}
+		if !ok {
+			manifestErrN++
 		}
 		newN++
 		fmt.Printf("  [%d/%d] %.50s (%d chars)\n", i+1, len(all), c.Name, len(md))
 		time.Sleep(1200 * time.Millisecond)
 	}
-	fmt.Printf("\nDONE (chats): %d new, %d skipped, %d errors -> %s\n", newN, skip, errN, outDir)
+	manifestNote := ""
+	if manifestErrN > 0 {
+		manifestNote = fmt.Sprintf(", %d manifest errors (see log — export itself is fine)", manifestErrN)
+	}
+	fmt.Printf("\nDONE (chats): %d new, %d skipped, %d errors%s -> %s\n", newN, skip, errN, manifestNote, outDir)
 
 	// 3) Non-chat surfaces — project knowledge docs + the claude.ai memory blob.
 	fmt.Println("\n== project docs ==")

@@ -151,6 +151,21 @@ before it ever shipped. Statement coverage 27.8% → 35.0%.
   manifest, reported as an X/Y scorecard) needs a corresponding change in the separate
   mempalace-src ingest pipeline and is intentionally not built in this repo; README marks it
   open rather than implying the full round-trip exists.
+  **Caught by an independent Go-reviewer pass before this shipped:** the first draft's
+  `manifestMu` (a plain `sync.Mutex`) was documented as guarding the manifest's
+  load-modify-save, but a `sync.Mutex` only ever reaches goroutines within one process —
+  it does nothing for two separate `schroedinger-sync.exe` instances sharing an `outDir`,
+  which is this tool's own documented supported combination (`supervise`/`tray`/`watch`
+  autostart alongside a manual `harvest`, see README). Measured, not assumed: a scratch
+  test racing two independent load/save sequences lost 52 of 100 entries. Fixed by being
+  honest about the gap instead of rushing untested Windows-mutex/thread-affinity code into
+  a release — `manifestMu`'s doc comment now states the cross-process hazard explicitly
+  (same "KNOWN RESIDUAL GAP" posture already used for `cleanupTemp`'s orphaned-Chrome-child
+  case) and notes it is currently inert (nothing reads the manifest yet) but becomes
+  load-bearing the moment the read-back half above lands. Separately, `writeMarkdown` now
+  returns a `manifestOK bool` so all 4 call sites can surface a manifest failure in their
+  own summary line/log instead of only a log line easy to miss in a hidden daemon (the
+  MEDIUM half of the same review pass) — still never fails the export itself over it.
 - **sessionKey/master-key zero-hardening.** The raw AES master key (`loadMasterKey`) and the
   raw decrypted sessionKey plaintext (`decryptValue`'s return) are `[]byte` — unlike the
   immutable `string` `readSessionKey` ultimately returns, a `[]byte` can actually be

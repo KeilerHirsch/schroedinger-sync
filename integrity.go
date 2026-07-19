@@ -32,10 +32,25 @@ const manifestFileName = ".content-hashes.json"
 // content as of the last write.
 type contentManifest map[string]string
 
-// manifestMu guards loadManifest+saveManifest around each writeMarkdown call. The tray
-// daemon's background sync goroutine and a manual harvest could in principle touch the
-// same outDir concurrently (see security.go's activeTeardown for the same two-goroutine
-// reasoning); a read-modify-write race here would silently drop one side's hash entry.
+// manifestMu guards loadManifest+saveManifest against concurrent GOROUTINES within this
+// one process (matches security.go's activeTeardown reasoning: the tray daemon's
+// background sync goroutine and the tray UI goroutine).
+//
+// KNOWN RESIDUAL GAP (go-reviewer catch, 2026-07-19, measured not assumed: a scratch
+// test with two independent loadManifest/saveManifest sequences racing lost 52/100
+// entries): this mutex does NOT reach across PROCESSES. `supervise`/`tray`/`watch`
+// running via autostart alongside a manually-launched `harvest` against the same outDir
+// is this tool's own documented supported combination (see README) -- two separate
+// schroedinger-sync.exe instances doing a load-modify-save on .content-hashes.json can
+// still race, and the atomic temp-file+rename in saveManifest prevents a TORN file but
+// not a LOST UPDATE (last rename simply wins). Same unaddressed hazard class as
+// daemon.go's .sync-state.json, and same posture as this codebase's other documented
+// residual gaps (see cleanupTemp's orphaned-Chrome-child note): real design work (a
+// Windows named mutex, keyed by outDir, correctly pinned to an OS thread since Win32
+// mutex ownership is per-thread not per-goroutine -- NOT a same-session patch), not
+// folded into this round. Currently inert in practice: nothing in this codebase reads
+// the manifest yet (the ingest-side read-back verification it exists for, README
+// roadmap #1, is not built) -- becomes load-bearing the moment that lands.
 var manifestMu sync.Mutex
 
 func manifestPath(outDir string) string { return filepath.Join(outDir, manifestFileName) }
@@ -102,9 +117,17 @@ func hashContent(content []byte) string {
 // sync with what is actually on disk. Per-file save costs one small JSON read+write per
 // export (microseconds; manifests here top out at a few thousand entries) and keeps the
 // manifest exactly as durable as the files it describes.
-func writeMarkdown(outDir, fname string, content []byte) error {
+//
+// manifestOK reports whether the hash was actually recorded -- false on any lock/save
+// failure (logged here either way) -- so a caller can count it towards its own summary
+// line (go-reviewer MEDIUM finding: a persistent manifest failure, e.g. AV locking
+// .content-hashes.json, previously had no visible signal beyond a repeated log line easy
+// to miss in a hidden/autostart daemon). err is unrelated to the manifest -- it is
+// non-nil ONLY when the actual content file failed to write, which is the one condition
+// that should make a caller count the export itself as failed.
+func writeMarkdown(outDir, fname string, content []byte) (manifestOK bool, err error) {
 	if err := os.WriteFile(fname, content, 0o600); err != nil { // #nosec G304 G703 -- outDir is a local CLI arg, see cdp.go
-		return err
+		return false, err
 	}
 	manifestMu.Lock()
 	defer manifestMu.Unlock()
@@ -114,6 +137,7 @@ func writeMarkdown(outDir, fname string, content []byte) error {
 		// The Markdown file itself is already safely on disk -- a manifest write failure
 		// (disk full, AV lock) must not be reported as if the export itself failed.
 		logf("  manifest write ERR %.40s: %v", filepath.Base(fname), err)
+		return false, nil
 	}
-	return nil
+	return true, nil
 }

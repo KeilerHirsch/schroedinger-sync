@@ -531,7 +531,7 @@ func cdpHarvest() {
 			fmt.Printf("  [%d/%d] SKIP %.40s: unexpected non-conversation response, not written\n", i+1, len(all), c.Name)
 			continue
 		}
-		if e := os.WriteFile(fname, []byte(md), 0o600); e != nil { // #nosec G304 G703 -- see above
+		if e := writeMarkdown(outDir, fname, []byte(md)); e != nil {
 			errN++
 			fmt.Printf("  [%d/%d] write ERR %.40s: %v\n", i+1, len(all), c.Name, e)
 			continue

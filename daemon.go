@@ -377,7 +377,7 @@ func syncConversations(get func(string) (string, error), org, outDir string, s *
 			logf("  SKIP %.40s: unexpected non-conversation response, not written", c.Name)
 			continue
 		}
-		if werr := os.WriteFile(fname, []byte(md), 0o600); werr != nil { // #nosec G304 G703 -- see cdp.go
+		if werr := writeMarkdown(outDir, fname, []byte(md)); werr != nil {
 			errN++
 			logf("  write ERR %.40s: %v", c.Name, werr)
 			continue

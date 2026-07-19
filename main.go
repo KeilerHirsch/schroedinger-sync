@@ -227,7 +227,11 @@ func checkClaudeDesktopInstalled() error {
 // cdp.go); it never needs cf_clearance/__cf_bm/etc., so we never decrypt them. Smaller
 // blast radius: exactly one secret is ever held in process memory. Registers the value
 // with the redactor (security.go) before returning it, so it can never leak into any
-// diagnostic output from this point on.
+// diagnostic output from this point on. The master key and raw decrypted plaintext are
+// []byte -- unlike the immutable string returned here, they CAN be zeroed -- and are
+// deferred to zeroBytes the moment their last read (decryptValue / cleanValue) is done,
+// so neither sits in heap memory unnecessarily long. See security.go's zeroBytes doc for
+// why this is scoped to these two local buffers only, not the redactor's own registry.
 func readSessionKey() (string, error) {
 	if err := checkClaudeDesktopInstalled(); err != nil {
 		return "", err
@@ -236,6 +240,7 @@ func readSessionKey() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("master key: %w", err)
 	}
+	defer zeroBytes(key)
 	db, closeDB, err := openCookieDB()
 	if err != nil {
 		return "", err
@@ -251,6 +256,7 @@ func readSessionKey() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("decrypt sessionKey: %w", err)
 	}
+	defer zeroBytes(pt)
 	val := cleanValue(pt)
 	if !headerSafe(val) {
 		return "", fmt.Errorf("decrypted sessionKey failed sanity check")

@@ -47,6 +47,22 @@ func RegisterSecret(s string) {
 	secrets = append(secrets, s)
 }
 
+// zeroBytes overwrites b in place with zero bytes. Go's GC does not scrub freed memory,
+// so a decrypted secret ([]byte, unlike an immutable string, CAN be overwritten) left to
+// become garbage can still be present in that heap page indefinitely -- readable by a
+// memory dump, a crash core, or a swapped-out page. Call via defer immediately after the
+// last read of a raw secret buffer. Does NOT apply to the redactor's own `secrets
+// []string` registry (security.go's RegisterSecret/redact): that copy is deliberately
+// kept alive for the program's whole lifetime so every later stdout/log line can still be
+// scrubbed -- converting it to zeroable bytes would break the "one choke point" redaction
+// guarantee documented above, for no gain (a live long-running daemon's redaction list is
+// the one place this secret is SUPPOSED to still be findable, on purpose).
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
 // redact replaces every registered secret substring with a fixed placeholder. This is
 // the single enforcement point: every output path in this program (stdout via
 // installStdoutRedactor, the daemon's sync.log via logf, and probe-report.txt via

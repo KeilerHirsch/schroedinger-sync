@@ -111,6 +111,60 @@ func TestRegisterSecretIgnoresShortValues(t *testing.T) {
 	}
 }
 
+// --- zeroBytes (sessionKey/master-key hardening) -----------------------------
+
+func TestZeroBytesClearsSlice(t *testing.T) {
+	b := []byte("super-secret-decrypted-value")
+	zeroBytes(b)
+	for i, v := range b {
+		if v != 0 {
+			t.Fatalf("zeroBytes left a non-zero byte at index %d: %v", i, b)
+		}
+	}
+}
+
+func TestZeroBytesHandlesNilAndEmpty(t *testing.T) {
+	zeroBytes(nil)      // must not panic
+	zeroBytes([]byte{}) // must not panic
+}
+
+// TestZeroBytesDoesNotAffectAStringAlreadyCopiedOut proves the specific ordering
+// readSessionKey relies on is actually safe: string(pt) in cleanValue COPIES pt's bytes
+// (a Go string conversion never aliases), so zeroing pt via defer -- which runs AFTER
+// cleanValue has already returned its own independent string -- cannot corrupt the
+// value the caller receives.
+func TestZeroBytesDoesNotAffectAStringAlreadyCopiedOut(t *testing.T) {
+	pt := []byte("sk-ant-test-value-0123456789")
+	s := string(pt) // same conversion cleanValue performs
+	zeroBytes(pt)
+	if s != "sk-ant-test-value-0123456789" {
+		t.Fatalf("zeroing the source slice corrupted the already-copied string: %q", s)
+	}
+}
+
+// TestReadSessionKeyZeroesLocalSecrets is a tripwire (same idiom as
+// TestHeadlessIsHardcoded / TestNetworkEgressIsClaudeOnly below): it reads main.go's own
+// source and proves the master key and raw decrypted plaintext are deferred to
+// zeroBytes, so a future edit that adds a new early-return path or refactors this
+// function can't silently drop the hardening without failing CI.
+func TestReadSessionKeyZeroesLocalSecrets(t *testing.T) {
+	b, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	src := string(b)
+	fn := src[strings.Index(src, "func readSessionKey("):]
+	if end := strings.Index(fn, "\nfunc "); end > 0 {
+		fn = fn[:end]
+	}
+	if !strings.Contains(fn, "defer zeroBytes(key)") {
+		t.Error("readSessionKey must defer zeroBytes(key) right after loadMasterKey succeeds")
+	}
+	if !strings.Contains(fn, "defer zeroBytes(pt)") {
+		t.Error("readSessionKey must defer zeroBytes(pt) right after decryptValue succeeds")
+	}
+}
+
 // goSourceFiles returns this package's own .go files (excluding _test.go), so the static
 // checks below scan exactly what ships, not test scaffolding.
 func goSourceFiles(t *testing.T) []string {
